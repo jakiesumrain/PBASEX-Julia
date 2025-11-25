@@ -345,7 +345,7 @@ Units depend on your image calibration and the `alpha` parameter.
 
 ### Intensity Spectrum
 ```julia
-IE = result.IE  # I(E) - radial intensity distribution
+IE = result.IE  # I(E) - 1D energy distribution
 ```
 This is the l=0 (isotropic) component.
 
