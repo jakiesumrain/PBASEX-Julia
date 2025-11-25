@@ -1,0 +1,34 @@
+# Julia
+*.jl.cov
+*.jl.*.cov
+*.jl.mem
+deps/deps.jl
+
+# Build artifacts
+Manifest.toml
+
+# Data and cache files
+data/
+*.h5
+*.hdf5
+
+# Output files
+*.txt
+!examples/image.txt
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# IDE files
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# Temporary files
+*.tmp
+*.log
+out.h5
+basis.h5
