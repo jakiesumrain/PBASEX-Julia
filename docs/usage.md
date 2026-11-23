@@ -24,6 +24,30 @@ center when it differs from this default. Convert a NumPy zero-based
 `[row, column]` pair by reversing its order and adding one to both coordinates.
 For example, `[473, 476]` becomes `(477, 474)`.
 
+### Align the polarization axis
+
+The angular basis uses the vertical detector coordinate to calculate
+`cos(theta)`. Supply an image with its polarization axis vertical. For a
+horizontal axis, rotate the image 90° counterclockwise with `rotl90` and
+transform its measured center using the original image width.
+
+```julia
+# For a horizontal-polarization image with NumPy center [473, 476].
+column, row = 477, 474
+aligned_image = rotl90(image)
+aligned_center = (row, size(image, 2) + 1 - column)
+result = pbasex(aligned_image; center=aligned_center, make_images=false)
+```
+
+For a 1024 × 1024 image, this gives `(474, 548)` in one-based
+`(column, row)` coordinates. A transpose gives `(474, 477)` because it
+swaps axes without reversing the new row axis. With all four quadrants
+and even Legendre orders, the transposed and rotated images give
+equivalent fits. When using pixel weights, apply the same transformation
+to the weight image. Quadrant selection refers to the transformed image.
+
+### Select quadrants
+
 `quadrant_filter` takes a four-element integer vector of zeros and ones in
 CPBASEX order.
 
@@ -43,7 +67,8 @@ The folded quadrant starts at the center and extends as far as the selected
 quadrants have pixels in common. Julia crops or zero-pads each dimension to
 the basis size. With all quadrants selected, the last radius with complete
 detector coverage is the shortest distance from the center to any image edge.
-For the 1024 × 1024 example centered at `(477, 474)`, this radius is 473 px.
+For the aligned 1024 × 1024 example centered at `(474, 548)`, this radius
+is 473 px.
 Bins at larger radii depend on a fit to incomplete detector coverage.
 
 ## Set the energy scale and fit
@@ -77,7 +102,7 @@ folded weight are `NaN`.
 | --- | --- |
 | `E` | Vector of `length(x)` energy samples on the basis grid. |
 | `IE` | Vector of `length(x)` intensity values. |
-| `betas` | Matrix with one row per energy and one column per nonzero Legendre order, in basis order. At zero `IE`, entries are `NaN`. |
+| `betas` | Matrix with one row per energy and one column per nonzero Legendre order, in basis order. Each value is the corresponding angular component divided by `IE`. At zero `IE`, entries are `NaN`. |
 | `coefficients` | Matrix with `length(k)` radial centers as rows and `length(l)` Legendre orders as columns. |
 | `reconstructed_image` | Fitted detector projection, or `nothing` with `make_images=false`. |
 | `inverted_image` | Abel-inverted central slice, or `nothing` with `make_images=false`. |
@@ -86,6 +111,10 @@ folded weight are `NaN`.
 An image reconstructed from a basis of length `nx` has side length
 `2 * nx - 1` and center `(nx, nx)`. This makes the output grid independent of
 the input image size and measured center.
+
+Beta values can be sensitive to small fit differences where the intensity
+is weak. For a basis comparison, report the intensity range used to
+compare the beta curves. [Worked comparison](matlab-migration.md#circularized-image-with-aligned-polarization)
 
 Save the spectrum and anisotropies from the example above using HDF5.
 

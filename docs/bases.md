@@ -18,6 +18,10 @@ Precompute a basis once and use its path across images. The ordinary
 `BASISData(path)` constructor uses `Float64`. Use `BASISData{Float32}` for
 single-precision storage.
 
+The `radial_basis` keyword selects a family when building a basis. For a
+saved Julia spline basis, pass its path to reuse the recorded family.
+For a MATLAB basis, pass its path and let the file supply the factors.
+
 ```julia
 using pBASEX
 
@@ -92,9 +96,12 @@ geometry and the missed-shell example.
 Compact support makes radial coefficients more local and lets you control
 overlap through `h`. Choose `h` with the center spacing in mind. Narrower
 support can leave gaps, while wider support gives more overlap and can
-smooth narrow spectral features. Compare the projection residuals and
-spectrum stability when changing it. The forward fit still uses a dense
-SVD, and conditioning depends on the grid and basis overlap.
+smooth narrow spectral features. Away from the origin, a spline with
+`h = 4` px has RMS width `h / sqrt(3)`, about 2.31 px, while the default
+Gaussian width on the 512-radius grid is 2.8 px. A comparison using those
+defaults measures the combined effect of shape and width. The forward fit
+uses a dense SVD, and conditioning depends on the grid and basis overlap.
+[Measured spline and Gaussian comparison](matlab-migration.md#circularized-image-with-aligned-polarization)
 
 ## Supply custom radial functions
 
