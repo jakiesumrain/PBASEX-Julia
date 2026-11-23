@@ -102,7 +102,7 @@ function findG(X::AbstractVector, K::AbstractVector{T}, L::AbstractVector{Int},
 
     # Create coordinate grid for the pixels
     # meshgrid provides X coordinates in each row, Y coordinates in each column
-    xl_grid, yl_grid = meshgrid(X, X) 
+    xl_grid, yl_grid = meshgrid(T.(X), T.(X))
     # Flatten the grids into vectors for easier iteration
     xl = vec(xl_grid) # Vector of x-coordinates for each pixel
     yl = vec(yl_grid) # Vector of y-coordinates for each pixel
@@ -116,7 +116,8 @@ function findG(X::AbstractVector, K::AbstractVector{T}, L::AbstractVector{Int},
 
     # Setup progress meter for visual feedback
     # Shows progress over the total number of basis functions
-    progress = Progress(num_pixels, 1, "Calculating G basis functions...")
+    progress = Progress(num_pixels; dt=1, desc="Calculating G basis functions...")
+    rtol = max(T(1e-8), eps(T))
 
     # --- Calculate integrals for each pixel and basis function --- 
     Threads.@threads for ind = 1:num_pixels
@@ -140,7 +141,7 @@ function findG(X::AbstractVector, K::AbstractVector{T}, L::AbstractVector{Int},
                     integrand_functor = GIntegrand(R_pixel, T(y_pixel), l_val, k_val, params, rBF, leg)
 
                     # Perform numerical integration
-                    result, err = quadgk(integrand_functor, zero(T), z_limit_val, rtol=1e-8)
+                    result, err = quadgk(integrand_functor, zero(T), T(z_limit_val); rtol)
                     #result, err = quadgk(integrand_functor, zero(T), T(Inf), rtol=1e-8)
 
                     # Optional: Add back the warning for high integration error if needed
