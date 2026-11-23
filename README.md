@@ -32,6 +32,11 @@ The first run builds a basis and caches it in `data/`. Later runs can reuse
 that cache. The default energy axis is radius squared in pixel². Pass
 `alpha` to convert it to your calibrated energy units.
 
+For your own images, align the polarization axis with the vertical image
+axis before fitting. The Gaussian basis is the default. Select
+`radial_basis=:cubic_bspline` when building a compact spline basis.
+[Image alignment](docs/usage.md#align-the-polarization-axis) · [Spline basis](docs/bases.md#use-a-compact-cubic-b-spline)
+
 To run the bundled example with image reconstruction and HDF5 output, use
 `julia --project=. --threads=auto examples/sample_pbasex.jl` from the checkout.
 It uses `basis.h5` and writes `out.h5` in the working directory.
@@ -62,5 +67,4 @@ If you use this software in research, cite García, Nahon, and Powis (2004),
 [Original pBASEX paper](https://doi.org/10.1063/1.1807578)
 
 PBASEX-Julia is a Julia port of Elio Gilbert Champenois's MATLAB and Python
-implementation. See the [MIT license](LICENSE) for copyright details and the
-[CPBASEX repository](https://github.com/e-champenois/CPBASEX) for the upstream code.
+implementation, distributed under the MIT license. [License](LICENSE) · [Upstream CPBASEX repository](https://github.com/e-champenois/CPBASEX)

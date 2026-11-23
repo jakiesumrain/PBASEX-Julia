@@ -1,8 +1,9 @@
 # Migrate from MATLAB CPBASEX
 
-Start with the same detector image, center, basis, energy calibration, and
-regularization used in MATLAB. A shared basis isolates differences between
-the solvers and preserves the original radial sampling.
+Start with the same detector image orientation, center, basis, energy
+calibration, and regularization used in MATLAB. A shared basis isolates
+differences between the solvers and preserves the original radial sampling.
+[Align the polarization axis](usage.md#align-the-polarization-axis)
 
 ## Reuse a MATLAB basis in Julia
 
@@ -75,18 +76,40 @@ unweighted basis and includes the central-slice matrix.
 ## Validation results
 
 These comparisons used Julia 1.11.3 and MATLAB R2024b with all four quadrants
-selected and unweighted fits. Relative L2 error is the norm of the elementwise
-difference divided by the norm of the reference output.
+selected and unweighted fits. Relative L2 difference is the norm of the
+elementwise difference divided by the norm of the reference output.
+
+### Bundled example image
 
 | Image and comparison | Result |
 | --- | --- |
 | Bundled 1023 × 1023 image, both solvers using the same basis | At most `8.0e-13` relative L2 error across the two shared-basis runs for all compared outputs, including spectra, coefficients, anisotropies, and reconstructed images. |
 | Bundled image, independently generated bases | Relative L2 error of `1.50e-6` for the energy spectrum and `1.61e-6` for the inverted slice. |
-| Separate circularized 1024 × 1024 image, shared MATLAB basis | Relative L2 error of `1.84e-14` for the energy spectrum. |
-| Circularized image, independently generated bases | Relative L2 error of `1.18e-6` for the energy spectrum. Both runs placed the main peak at 189 px. |
 
 MATLAB CPBASEX uses trapezoidal integration for the forward basis, while
 Julia uses adaptive Gauss–Kronrod integration. Independently generated
-bases can therefore differ even when the input parameters agree. The
-same-basis comparisons measure solver agreement. Julia's weighted-cache
-behavior is covered by package tests. [Validation record in PR #2](https://github.com/jakiesumrain/PBASEX-Julia/pull/2)
+Gaussian bases can therefore differ even when the input parameters agree.
+Julia's weighted-cache behavior is covered by package tests.
+[Bundled-image validation in PR #2](https://github.com/jakiesumrain/PBASEX-Julia/pull/2)
+
+### Circularized image with aligned polarization
+
+The separate 1024 × 1024 circularized image had a horizontal polarization
+axis. The comparison used a 90° counterclockwise rotation and the transformed
+one-based center `(474, 548)`. All three fits used `x=0:511`,
+`k=1.5:4:509.5`, `l=0:2:10`, `alpha=1`, and `reg=0`. The Gaussian width
+was 2.8 px and the spline knot spacing was 4 px.
+
+| Energy spectrum comparison | Relative L2 difference through radius 473 px |
+| --- | ---: |
+| Julia and MATLAB using the same Gaussian basis file | `1.37e-14` |
+| Julia and MATLAB using independently generated Gaussian bases | `8.44e-7` |
+| Julia cubic B-spline vs. MATLAB Gaussian | 2.96% |
+
+The 473 px limit is the last radius with complete detector coverage.
+All fits placed the dominant peak at 189 px. The spline and MATLAB
+Gaussian peak intensities were 537.3681 and 531.8590, respectively.
+The fitted $\beta_2$ at that peak was +0.24100 with the spline and +0.24163
+with either Gaussian fit. Across the 336 fully covered bins where all
+three fits had at least 1% of their respective peak intensities, the
+largest spline–Gaussian beta differences occurred at radii 13–22 px.
