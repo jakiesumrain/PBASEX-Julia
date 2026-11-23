@@ -1,12 +1,11 @@
-include("../src/pbasex_core.jl")
-using .pBASEX
+using pBASEX
 using DelimitedFiles, HDF5
 
 # Define the basis function parameters
 l_values = collect(0:2:4)  # Legendre polynomial orders
 
 
-img = readdlm("image.txt", ' ', Float64)
+img = readdlm(joinpath(@__DIR__, "image.txt"), ' ', Float64)
 println(size(img))
 
 out = pbasex(img, l = l_values, basis = "basis.h5")

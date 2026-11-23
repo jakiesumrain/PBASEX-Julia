@@ -10,9 +10,7 @@ module InverseBasisFunctions
 using LinearAlgebra
 using ProgressMeter # For displaying calculation progress
 
-# Assuming MathUtils provides meshgrid and leg (Legendre polynomials)
-include("math_utils.jl")
-using .MathUtils: meshgrid, leg
+using ..MathUtils: meshgrid, leg
 
 export findGinv
 

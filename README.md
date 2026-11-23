@@ -27,37 +27,32 @@ Based on: Garcia, G. A., Nahon, L., & Powis, I. (2004). Two-dimensional charged 
 
 ## Installation
 
-This package is not registered. Clone the repository:
+Clone the repository and instantiate its project with Julia 1.10 or later in
+the Julia 1 series.
 
 ```bash
-git clone https://github.com/your-repo/PBASEX-Julia.git
+git clone https://github.com/jakiesumrain/PBASEX-Julia.git
 cd PBASEX-Julia
+julia --project=. -e 'using Pkg; Pkg.instantiate()'
 ```
 
 ### Dependencies
 
-Install required packages in Julia:
-
-```julia
-using Pkg
-Pkg.add(["HDF5", "QuadGK", "ProgressMeter"])
-```
-
-Required packages:
+The project declares its dependencies in `Project.toml`.
 - **HDF5.jl**: Basis data caching
 - **QuadGK.jl**: Numerical integration
 - **ProgressMeter.jl**: Progress bars during computation
 - **LinearAlgebra** (stdlib)
 - **Serialization, SHA** (stdlib): Hash-based caching
+- **DelimitedFiles**: Text image input in the examples
 
 ## Quick Start
 
 ### Basic Example
 
 ```julia
-# Include the package (not installed via Pkg)
-include("src/pbasex_core.jl")
-using .pBASEX
+# Start Julia with julia --project=. from the repository root
+using pBASEX
 using DelimitedFiles, HDF5
 
 # Define the basis function parameters
@@ -93,12 +88,18 @@ end
 
 **With multi-threading** (recommended):
 ```bash
-julia --threads=auto examples/sample_pbasex.jl
+julia --project=. --threads=auto examples/sample_pbasex.jl
 ```
 
 **Single-threaded**:
 ```bash
-julia examples/sample_pbasex.jl
+julia --project=. examples/sample_pbasex.jl
+```
+
+Run the test suite from the repository root.
+
+```bash
+julia --project=. -e 'using Pkg; Pkg.test()'
 ```
 
 ## Usage Guide
@@ -211,8 +212,7 @@ weights = ones(512, 512)  # Uniform weighting
 ### Complete Example
 
 ```julia
-include("src/pbasex_core.jl")
-using .pBASEX
+using pBASEX
 using DelimitedFiles
 
 # Load experimental image
@@ -257,8 +257,7 @@ plot!(result.E, result.betas[:, 1], label="β₂(E)")
 For repeated analyses with the same basis configuration, pre-compute and cache the basis:
 
 ```julia
-include("src/pbasex_core.jl")
-using .pBASEX
+using pBASEX
 
 # Define the basis function parameters
 l_values = collect(0:2:4)  # Legendre polynomial orders
@@ -310,10 +309,10 @@ result = pbasex(img,
 Enable Julia threads for parallel basis computation:
 ```bash
 # Automatic thread detection
-julia --threads=auto script.jl
+julia --project=. --threads=auto script.jl
 
 # Specify thread count
-julia --threads=8 script.jl
+julia --project=. --threads=8 script.jl
 ```
 
 ### Basis Caching Strategy
@@ -418,9 +417,10 @@ end
 
 ```
 PBASEX-Julia/
+├── Project.toml                   # Package metadata and dependencies
 ├── src/
-│   ├── pbasex_core.jl              # Main entry point
-│   ├── pbasex.jl                   # pbasex() function, preprocessing
+│   ├── pBASEX.jl                   # Package entry point
+│   ├── inversion.jl                # pbasex() function, preprocessing
 │   ├── pbasex_types.jl             # BASISData, PBASEXResult definitions
 │   ├── basis_functions.jl          # findG() - forward transform
 │   ├── inverse_basis_functions.jl  # findGinv() - inverse transform
@@ -431,6 +431,8 @@ PBASEX-Julia/
 │   ├── sample_basis.jl            # Basis pre-computation example
 │   └── image.txt                  # Sample data
 ├── docs/                          # A brief introduction to pbasex method
+├── test/
+│   └── runtests.jl                 # Package tests
 ├── LICENSE
 └── README.md
 ```

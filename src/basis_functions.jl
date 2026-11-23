@@ -12,13 +12,7 @@ using LinearAlgebra
 using QuadGK # For numerical integration
 using ProgressMeter # For displaying calculation progress
 
-# --- Revert Includes and Using back to MathUtils for leg ---
-# Assuming MathUtils provides meshgrid and leg (Legendre polynomials)
-include("math_utils.jl")
-using .MathUtils: meshgrid, leg
-# # Include and use MemoizedLegendre for the 'leg' function (REVERTED)
-# include("memoized_legendre.jl")
-# using .MemoizedLegendre: leg
+using ..MathUtils: meshgrid, leg
 
 export findG
 
