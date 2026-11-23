@@ -1,9 +1,8 @@
 """
     InverseBasisFunctions
 
-Provides functions for calculating the inverse basis transformation matrix `Ginv`
-used in the PBASEX algorithm. This matrix projects the measured 2D image data
-onto the basis set to determine the expansion coefficients.
+Provides the central-slice basis matrix `Ginv`, which maps fitted expansion
+coefficients to pixels of the Abel-inverted image.
 """
 module InverseBasisFunctions
 
@@ -18,15 +17,9 @@ export findGinv
     findGinv(X::AbstractVector, K::AbstractVector{T}, L::AbstractVector{Int}, 
              rBF::Function, params::AbstractVector{T}) where T<:AbstractFloat -> Matrix{T}
 
-Calculate the inverse basis transformation matrix `Ginv` for the pBASEX algorithm.
-
-This matrix maps from the measured 2D image pixel space back to the pBASEX 
-basis coefficients. Each column of `Ginv` represents a basis function 
-(a specific combination of radial `k` and angular `l`) evaluated at all 
-pixel coordinates.
-
-Multiplying the transpose of this matrix by the flattened image vector yields
-the basis coefficients: `coefficients = Ginv' * image_vector` (or equivalent solve).
+Calculate the pBASEX central-slice matrix. Each column represents a pair
+of radial center `k` and angular order `l` evaluated at all slice pixels.
+Multiply `Ginv` by the fitted coefficients to recover the slice.
 
 Unlike the forward matrix `G` (which involves line-of-sight integration), `Ginv`
 is computed directly by evaluating the product of the radial basis function (`rBF`)
@@ -75,7 +68,7 @@ function findGinv(X::AbstractVector, K::AbstractVector{T}, L::AbstractVector{Int
     
     # --- Calculate Pixel Coordinates --- 
     # Create coordinate grid for the pixels
-    xl_grid, yl_grid = meshgrid(X, X)
+    xl_grid, yl_grid = meshgrid(T.(X), T.(X))
     # Flatten the grids into vectors
     xl = vec(xl_grid) # Vector of x-coordinates for each pixel
     yl = vec(yl_grid) # Vector of y-coordinates for each pixel
@@ -83,11 +76,8 @@ function findGinv(X::AbstractVector, K::AbstractVector{T}, L::AbstractVector{Int
     R = @. sqrt(xl^2 + yl^2)
     # Calculate the cosine of the angle (theta) for each pixel (relative to y-axis)
     costh = yl ./ R
-    # Handle R=0 case (origin): cos(theta) is undefined, but for P_l(cosθ), only P_0 is non-zero (and equals 1)
-    # We set cos(0) = 0 here; leg(l, 0) will be zero for l!=0, and leg(0, 0) is handled.
-    #costh[R .== 0] .= 0.0 
-    # Explicitly handle potential NaNs remaining (shouldn't occur with R==0 check)
-    #costh[isnan.(costh)] .= 0.0 
+    # Leave the angle undefined at the origin. MATLAB CPBASEX sets the resulting
+    # anisotropic terms to zero there, while P₀ is one.
     
     # --- Initialize Output Matrix --- 
     # Dimensions: (num_pixels, num_basis_functions)
@@ -97,7 +87,7 @@ function findGinv(X::AbstractVector, K::AbstractVector{T}, L::AbstractVector{Int
     # --- Calculate Basis Functions (Parallelized) --- 
     # Setup progress meter for visual feedback
     # Shows progress over the total number of basis functions
-    progress = Progress(num_basis_funcs, 1, "Calculating G_inv basis functions...")
+    progress = Progress(num_basis_funcs; dt=1, desc="Calculating G_inv basis functions...")
 
     # Use multithreading to compute columns of Ginv in parallel.
     # Each thread handles a subset of the basis functions.
@@ -124,7 +114,7 @@ function findGinv(X::AbstractVector, K::AbstractVector{T}, L::AbstractVector{Int
     finish!(progress)
     
     # Replace any potential NaN values with zeros (as a final safety check)
-    Ginv[isnan.(Ginv)] .= 0.0
+    replace!(Ginv, T(NaN) => zero(T))
     
     # Note: The matrix is NOT transposed here.
     # It remains (num_pixels, num_basis_functions).

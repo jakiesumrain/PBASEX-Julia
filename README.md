@@ -58,7 +58,7 @@ using DelimitedFiles, HDF5
 # Define the basis function parameters
 l_values = collect(0:2:4)  # Legendre polynomial orders: 0, 2, 4
 
-# Load a 2D image (must be Float64, square matrix)
+# Load a square floating-point image
 img = readdlm("examples/image.txt", ' ', Float64)
 println(size(img))
 
@@ -114,7 +114,8 @@ pbasex(image::AbstractMatrix{T};
 ```
 
 **Required Input:**
-- `image`: Square 2D array of Float64 values
+- `image`: Square 2D floating-point array. Use `Float64` for working with
+  full-precision bases or `Float32` to reduce matrix memory.
 
 **Returns:** `PBASEXResult` struct with fields:
 - `E::Vector`: Energy scale (α × x²)
@@ -122,7 +123,7 @@ pbasex(image::AbstractMatrix{T};
 - `betas::Matrix`: Anisotropy parameters β_l(E), columns correspond to l>0 orders
 - `reconstructed_image::Matrix`: Reconstructed 2D projection (if `make_images=true`)
 - `inverted_image::Matrix`: Abel inverted central slice (if `make_images=true`)
-- `residuals::Matrix`: Original - reconstructed image (if `make_images=true`)
+- `residuals::Matrix`: Original minus reconstructed image, when their size and center match
 - `coefficients::Matrix`: Raw basis expansion coefficients [nk × nl]
 
 ### Key Parameters
@@ -130,13 +131,16 @@ pbasex(image::AbstractMatrix{T};
 #### Basis Control
 
 **`basis`** - Controls basis caching:
-- `nothing` (default): Uses `data/` directory with hash-based filenames
-- `"directory/"`: Uses specified directory with hash-based filenames
-- `"file.h5"`: Uses specific file path
-  - If exists: loads cached basis
-  - If not exists: computes and saves to this path
+- `nothing` (default): Uses the repository's `data/` directory.
+- `"directory/"`: Uses an existing directory. Its cache key includes the
+  grid, basis parameters, and processed pixel weights. For custom radial or
+  integration functions, supply a `cache_key` that identifies their behavior.
+  Without one, the custom basis is computed in memory.
+- `"file.h5"`: Creates the named file or loads its existing basis and grid.
+  Explicitly supplied parameters must match the saved definition.
+  MATLAB CPBASEX files with an `Up` dataset can be used directly.
 
-#### Basis Definition (used only when computing new basis)
+#### Basis Definition
 
 **`x`** - Radial pixel grid (default: `0:511`)
 ```julia
@@ -148,7 +152,7 @@ x = collect(0:511)  # Standard 512-pixel radius
 k = collect(0:2:511) .+ 0.5  # Denser radial sampling
 ```
 
-**`l`** - Legendre polynomial orders (default: `[0, 2, 4]`)
+**`l`** - Even Legendre polynomial orders starting with zero (default: `[0, 2, 4]`)
 ```julia
 l = [0, 2, 4, 6]  # Add β₆ parameter
 ```
@@ -185,6 +189,8 @@ reg = 0.01  # Stabilize noisy images (typical range: 0.001-0.1)
 make_images = false  # Skip image reconstruction for speed
 ```
 
+This also skips building or loading the dense central-slice matrix `Ginv`.
+
 **`center`** - Image center in (column, row) (default: geometric center)
 ```julia
 center = (257, 257)  # Manually specify center
@@ -193,9 +199,12 @@ center = (257, 257)  # Manually specify center
 **`quadrant_filter`** - Quadrant selection (default: `[1, 1, 1, 1]`)
 ```julia
 quadrant_filter = [1, 1, 1, 1]  # Use all four quadrants
-quadrant_filter = [1, 0, 0, 0]  # Use only top-left quadrant
-# Order: [Top-Left, Top-Right, Bottom-Right, Bottom-Left]
+quadrant_filter = [1, 0, 0, 0]  # Use only top-right quadrant
+# MATLAB CPBASEX order: [Top-Right, Top-Left, Bottom-Left, Bottom-Right]
 ```
+
+Select at least one quadrant. The inversion normalizes the selected quadrants
+to the intensity scale of a four-quadrant sum.
 
 **`alpha`** - Energy scaling factor (default: `1.0`)
 ```julia
@@ -207,7 +216,9 @@ alpha = 2.5  # Scale energy axis: E = alpha * x²
 # Must match original image size before folding/resizing
 weights = ones(512, 512)  # Uniform weighting
 ```
-⚠️ **Important**: Providing weights requires computing a new basis (cannot reuse cached unweighted basis)
+Pass the same weight image when reusing a named weighted Julia basis. Files
+written by older Julia versions without weight metadata are treated as
+unweighted. Regenerate a legacy weighted file before reusing it.
 
 ### Complete Example
 
@@ -282,6 +293,7 @@ my_zIP = (R, k, p) -> sqrt(max(0.0, (10.0*p[1] + k)^2 - R^2))
 
 result = pbasex(img,
                 basis = "lorentzian_basis.h5",
+                cache_key = "lorentzian-v1",
                 rBF = my_rBF,
                 zIP = my_zIP,
                 params = [2.0])
@@ -294,7 +306,7 @@ Apply pixel-specific weights (e.g., for noise statistics):
 ```julia
 # Create weight matrix (same size as original image)
 noise_std = estimate_noise(img)
-weights = 1.0 ./ (noise_std.^2)
+weights = 1.0 ./ noise_std
 
 result = pbasex(img,
                 basis = "weighted_basis.h5",
@@ -319,7 +331,7 @@ julia --project=. --threads=8 script.jl
 
 First run with new basis parameters is slow (minutes to hours depending on grid size):
 ```julia
-# First run: computes basis (~10-60 minutes for 512×512)
+# First run: integrates and factorizes the basis
 result1 = pbasex(img1, basis="shared_basis.h5", x=collect(0:511), l=[0,2,4])
 
 # Subsequent runs: loads from cache (~seconds)
@@ -330,9 +342,9 @@ result3 = pbasex(img3, basis="shared_basis.h5")
 ### Memory Considerations
 
 For large images or dense basis sets:
-- Use `make_images=false` if only spectra/betas are needed
-- Grid size scales as O(n²) for pixels, O(m) for basis functions
-- Memory usage: ~8 bytes × (pixels² + pixels × basis_functions)
+- Use `make_images=false` if only spectra and anisotropies are needed.
+- Each dense matrix such as `U` or `Ginv` uses roughly
+  `sizeof(T) * length(x)^2 * length(k) * length(l)` bytes for a tall basis.
 
 ## Understanding Results
 
@@ -384,7 +396,7 @@ Create the directory first: `mkpath("path/to/cache")`
 - Use cached basis files
 
 ### Type errors
-Ensure image is Float64: `img = Float64.(img)`
+Convert integer images before inversion, for example with `img = Float64.(img)`.
 
 ## HDF5 File Format
 
@@ -392,13 +404,27 @@ Ensure image is Float64: `img = Float64.(img)`
 ```
 BASISData_<hash>.h5:
 ├── x          # Radial grid [Int]
-├── k          # Basis centers [Float64]
+├── k          # Basis centers
 ├── l          # Legendre orders [Int]
-├── U          # Left singular vectors [Float64]
-├── S          # Singular values [Float64]
-├── V          # Right singular vectors [Float64]
-├── frk        # Cached rBF evaluations [Float64]
-└── Ginv       # Inverse transform matrix [Float64]
+├── params     # Basis parameters
+├── weights    # Processed pixel weights, when supplied
+├── U          # Left singular vectors
+├── S          # Singular values
+├── V          # Right singular vectors
+├── frk        # Cached radial basis evaluations
+├── Ginv       # Central-slice matrix, when saved
+├── custom_functions
+└── cache_key  # Custom basis identity, when supplied
+```
+
+### MATLAB CPBASEX bases
+
+Pass a CPBASEX HDF5 basis directly to `pbasex`. For an existing file, Julia
+reads the coordinate grid and spectral factors and handles the MATLAB
+orientations of `Up`, `V`, `frk`, and `Ginv`.
+
+```julia
+result = pbasex(img; basis="G_r512_k128_l10.h5")
 ```
 
 ### Results Files (example)

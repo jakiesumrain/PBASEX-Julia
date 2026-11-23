@@ -8,6 +8,7 @@
 #
 using pBASEX
 using pBASEX.MathUtils: meshgrid
+using HDF5
 using Test
 
 @testset "PBASEX.jl" begin
@@ -63,6 +64,12 @@ using Test
         single_quadrant = foldQuadrant(img, 3, 3; quadrant_filter = [1, 0, 0, 0])
         @test size(single_quadrant) == (3, 3)
         @test all(single_quadrant .== 1.0)
+        labeled = [11 12 13; 21 22 23; 31 32 33]
+        for (i, corner) in enumerate((13, 11, 31, 33))
+            filter = [Int(i == j) for j in 1:4]
+            @test foldQuadrant(labeled, 2, 2; quadrant_filter=filter)[2, 2] == corner
+        end
+        @test_throws AssertionError foldQuadrant(img, 3, 3; quadrant_filter=zeros(Int, 4))
 
         # Values add up as advertised for a non-uniform image.
         # Index [1, 1] is the folding centre, so it appears in all four
@@ -89,6 +96,9 @@ using Test
         # Folding then unfolding a fourfold-symmetric image is the identity.
         original = ones(5, 5)
         @test unfoldQuadrant(foldQuadrant(original, 3, 3)) ≈ original
+        @test unfoldQuadrant(ones(3, 3); quadrant_count=1) == original
+        @test unfoldQuadrant(ones(3, 3, 2); center_offset=false, quadrant_count=1) == ones(6, 6, 2)
+        @test_throws AssertionError unfoldQuadrant(folded; quadrant_count=0)
 
         @test_throws AssertionError unfoldQuadrant(ones(1, 1))
     end
@@ -106,7 +116,8 @@ using Test
         @test all(padded[3:4, :] .== 0.0)
         @test all(padded[:, 3:4] .== 0.0)
 
-        @test_throws AssertionError resizeFolded(ones(3, 4), 2)
+        @test resizeFolded(ones(2, 4), 3) == [1 1 1; 1 1 1; 0 0 0]
+        @test resizeFolded(ones(2, 4, 2), 3)[:, :, 2] == [1 1 1; 1 1 1; 0 0 0]
         @test_throws AssertionError resizeFolded(ones(2, 2), 0)
     end
 
@@ -142,6 +153,9 @@ using Test
         @test_throws AssertionError pbasex(rand(4, 4); alpha = 0.0)
         @test_throws AssertionError pbasex(rand(4, 4); center = (0, 2))
         @test_throws AssertionError pbasex(rand(4, 4); weights = ones(4, 3))
+        @test_throws ArgumentError pbasex(ones(5, 5); l=[2, 4])
+        @test_throws ArgumentError pbasex(ones(5, 5); l=[0, 1])
+        @test_throws ArgumentError pbasex(ones(5, 5); l=[0, 0])
     end
 
     @testset "package inversion and cache round trip" begin
@@ -156,11 +170,90 @@ using Test
             image = unfoldQuadrant(reshape(projection, length(x), length(x)))
 
             @test isfile(basis)
-            result = pbasex(image; basis, x, k, l)
+            result = pbasex(image; basis)
             @test result isa PBASEXResult{Float64}
             @test result.coefficients ≈ coefficients
             @test result.reconstructed_image ≈ image
             @test size(result.inverted_image) == size(image)
+            @test pbasex(image; basis, quadrant_filter=[1, 0, 0, 0]).IE ≈ result.IE
+            @test pbasex(image; basis, quadrant_filter=[1, 0, 0, 0]).reconstructed_image ≈ image
+            shifted = @test_logs (:warn, r"Residuals require") pbasex(image; basis, center=(7, 8))
+            @test shifted.residuals === nothing
+            @test_throws ArgumentError pbasex(image; basis, x=1:8)
+            @test_throws ArgumentError pbasex(image; basis, params=[1.0])
+            @test_throws ArgumentError pbasex(image; basis, weights=ones(size(image)))
+
+            matlab_basis = joinpath(dir, "matlab.h5")
+            h5open(matlab_basis, "w") do f
+                write(f, "x", reshape(Float64.(x), :, 1))
+                write(f, "k", reshape(k, 1, :))
+                write(f, "l", reshape(Float64.(l), 1, :))
+                write(f, "Up", data.U)
+                write(f, "S", reshape(data.S, 1, :))
+                write(f, "V", permutedims(data.V))
+                write(f, "frk", data.frk)
+                write(f, "Ginv", permutedims(data.Ginv))
+            end
+            reference = pbasex(image; basis=matlab_basis)
+            @test reference.coefficients ≈ result.coefficients
+            @test reference.inverted_image ≈ result.inverted_image
+
+            legacy_basis = joinpath(dir, "legacy.h5")
+            h5open(legacy_basis, "w") do f
+                for name in (:x, :k, :l, :U, :S, :V, :frk, :Ginv)
+                    write(f, String(name), getproperty(data, name))
+                end
+            end
+            legacy = @test_logs (:warn, r"Legacy Julia basis") pbasex(image; basis=legacy_basis)
+            @test legacy.IE ≈ result.IE
+        end
+    end
+
+    @testset "cache identity and lazy slice" begin
+        mktempdir() do dir
+            x, l = 0:7, [0, 2]
+            first_basis = BASISData(dir; x, l, params=[1.4], make_images=false)
+            @test first_basis.Ginv === nothing
+            @test !h5open(f -> haskey(f, "Ginv"), only(readdir(dir; join=true)), "r")
+            other_width = BASISData(dir; x, l, params=[3.0], make_images=false)
+            @test other_width.frk != first_basis.frk
+            weighted = BASISData(dir; x, l, params=[1.4], weights=fill(2.0, 8, 8), make_images=false)
+            @test weighted.S ≈ 2 .* first_basis.S
+            @test length(readdir(dir)) == 3
+            complete = BASISData(dir; x, l, params=[1.4])
+            @test complete.S == first_basis.S
+            @test size(complete.Ginv) == (64, 4)
+
+            radial = (r, k, p) -> exp(-abs(r - k) / p[1])
+            BASISData(dir; x, l, rBF=radial, make_images=false)
+            @test length(readdir(dir)) == 3
+            a = BASISData(dir; x, l, rBF=radial, cache_key="exponential-v1", make_images=false)
+            b = BASISData(dir; x, l, rBF=radial, cache_key="exponential-v1", make_images=false)
+            @test a.S == b.S
+            @test length(readdir(dir)) == 4
+
+            image = ones(15, 15)
+            path = joinpath(dir, "weighted.h5")
+            fitting = pbasex(image; basis=path, x, l, weights=image, make_images=false)
+            reloaded = pbasex(image; basis=path, weights=image, make_images=false)
+            @test fitting.coefficients ≈ reloaded.coefficients
+            @test_throws ArgumentError pbasex(image; basis=path, make_images=false)
+        end
+    end
+
+    @testset "Float32 and rank-deficient inversions" begin
+        mktempdir() do dir
+            image = ones(Float32, 15, 15)
+            result = pbasex(image; basis=joinpath(dir, "single.h5"), x=0:7, l=[0, 2])
+            @test result isa PBASEXResult{Float32}
+            @test all(isfinite, result.coefficients)
+            @test all(isfinite, result.inverted_image)
+
+            zero_radial = (r, k, p) -> zero(r)
+            result = pbasex(image; basis=joinpath(dir, "zero.h5"), x=0:7, l=[0, 2],
+                            rBF=zero_radial, make_images=false)
+            @test all(iszero, result.coefficients)
+            @test all(isnan, result.betas)
         end
     end
 
