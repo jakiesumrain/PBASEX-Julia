@@ -10,7 +10,7 @@ evaluate the radial profiles and central slice.
 | `basis` argument to `pbasex` | Behavior |
 | --- | --- |
 | `nothing` | Use the package's `data/` directory. |
-| Existing directory | Reuse or create a file keyed by the grid, basis parameters, and processed weights. Custom functions also require a stable `cache_key` for reuse. |
+| Existing directory | Reuse or create a file keyed by the radial family, grid, basis parameters, and processed weights. Custom functions also require a stable `cache_key` for reuse. |
 | Existing HDF5 file | Read the grid and factors from that file. Explicitly supplied settings must agree with the file's metadata. Julia and MATLAB CPBASEX layouts are supported. |
 | New HDF5 path | Compute and save the basis at that path. The parent directory must exist. |
 
@@ -41,16 +41,66 @@ originally built with weights.
 | `x` | `0:511` | Integer radial grid. Use `0:rmax` for a detector sampled at unit pixel spacing. |
 | `k` | `x[2:4:end] .+ 0.5` | Radial centers. |
 | `l` | `[0, 2, 4]` | Distinct nonnegative even Legendre orders, starting with zero for image inversion. |
-| `params` | `[0.7 * length(x) / length(k)]` | Parameters for both basis functions. For the default Gaussian, the first value is the width in pixels. |
-| `rBF` | Gaussian | Radial function with signature `rBF(r, k, params)`. |
-| `zIP` | Gaussian cutoff | Upper limit of the line-of-sight integral, with signature `zIP(R, k, params)`. Here `R` is the projected radius. |
+| `radial_basis` | `:gaussian` | Built-in family. Use `:cubic_bspline` for compact support. |
+| `params` | Depends on the family | First value is the Gaussian width or the B-spline knot spacing, in pixels. |
+| `rBF` | Selected family | Custom radial function with signature `rBF(r, k, params)`. |
+| `zIP` | Selected family | Custom upper limit with signature `zIP(R, k, params)`, where `R` is the projected radius. |
 | `cache_key` | `nothing` | String identifying a custom radial function and integration limit. Change it when either function's behavior changes. |
 
 The Gaussian is `exp(-(r - k)^2 / (2 * sigma^2))`, where `sigma = params[1]`.
-The default integration limit truncates it at radius `k + sqrt(20) * sigma`.
+Its default width is `0.7 * length(x) / length(k)`, and its default
+integration limit truncates it at radius `k + sqrt(20) * sigma`.
+
+## Use a compact cubic B-spline
+
+Choose `radial_basis=:cubic_bspline` when creating a basis with `pbasex` or
+`BASISData`. To select a custom profile instead, omit `radial_basis` and
+supply `rBF` and `zIP`.
+
+```julia
+using pBASEX, DelimitedFiles
+
+image = readdlm("examples/image.txt", Float64)
+result = pbasex(image; radial_basis=:cubic_bspline, make_images=false)
+```
+
+The basis at radial center `k` is a centered cardinal cubic B-spline
+with knot spacing `h = params[1]`. The default is
+`h = length(x) / length(k)` pixels, which is 4 px for the default grid and
+centers. With $t=(r-k)/h$, the profile is
+
+$$
+B_3(t)=\begin{cases}
+(4-6|t|^2+3|t|^3)/6 & |t|<1, \\
+(2-|t|)^3/6 & 1\le |t|<2, \\
+0 & |t|\ge 2.
+\end{cases}
+$$
+
+The profile and its first two derivatives are continuous at the knots.
+Each coefficient affects the radial profile only on
+`[k - 2h, k + 2h]`, restricted to physical radii `r >= 0`.
+
+The finite support gives the forward projection exact integration bounds.
+Julia maps the support boundaries and interior knots to line-of-sight
+coordinates, so the quadrature samples each polynomial piece. Pixels
+outside the outer support radius have zero contribution from that basis
+function. Pixels inside the projected shell can still receive its
+contribution. See [line-of-sight integration](quadrature.md) for the
+geometry and the missed-shell example.
+
+Compact support makes radial coefficients more local and lets you control
+overlap through `h`. Choose `h` with the center spacing in mind. Narrower
+support can leave gaps, while wider support gives more overlap and can
+smooth narrow spectral features. Compare the projection residuals and
+spectrum stability when changing it. The forward fit still uses a dense
+SVD, and conditioning depends on the grid and basis overlap.
+
+## Supply custom radial functions
 
 For a custom basis, choose the radial profile and integration limit together.
-The following small basis uses a Lorentzian profile.
+Passing only `rBF` keeps the Gaussian cutoff. The following small basis
+uses a Lorentzian profile and a corresponding finite integration limit.
 
 ```julia
 using pBASEX
@@ -94,6 +144,7 @@ For a basis with `nx = length(x)`, `nk = length(k)`, `nl = length(l)`, and
 | Dataset | Meaning and shape |
 | --- | --- |
 | `x`, `k`, `l` | Grid, radial centers, and Legendre orders. |
+| `radial_basis` | Family identifier for a native cubic B-spline cache. |
 | `params` | Numeric basis parameters. |
 | `weights` | Optional processed weight matrix of size `nx × nx`. |
 | `U`, `S`, `V` | SVD of the projected basis. Sizes are `nx² × q`, `q`, and `(nk * nl) × q`. |

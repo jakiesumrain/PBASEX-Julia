@@ -17,7 +17,9 @@ Selected quadrants are normalized to the same scale as the four-quadrant sum.
 
 Pass an existing Julia or MATLAB CPBASEX HDF5 basis file to use its grid and
 precomputed matrices. An existing directory stores bases by definition.
-With basis=nothing, use the package's data directory. Pass make_images=false
+Select `radial_basis=:cubic_bspline` for a compact radial basis when building
+a new cache. The default is Gaussian. With basis=nothing, use the package's
+data directory. Pass make_images=false
 to calculate only spectra, anisotropies, and coefficients.
 """
 function pbasex(image::AbstractMatrix{T};
@@ -73,7 +75,7 @@ end
 function pre_process_image(image::AbstractMatrix{T}, basis_file, options) where T
     rows, cols = size(image)
     @assert rows == cols "Input image must be square, got dimensions ($rows, $cols)"
-    basis_keys = (:x, :k, :l, :params, :rBF, :zIP, :cache_key)
+    basis_keys = (:x, :k, :l, :radial_basis, :params, :rBF, :zIP, :cache_key)
     processing_keys = (:weights, :make_images, :reg, :center, :quadrant_filter, :alpha)
     unknown = setdiff(keys(options), (basis_keys..., processing_keys...))
     isempty(unknown) || @warn "Ignoring unknown keyword arguments" unknown
