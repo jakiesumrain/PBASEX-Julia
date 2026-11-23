@@ -1,20 +1,9 @@
-# Julia project environment for PBASEX-Julia.
-#
-# Usage:
-#   julia --project=. -e 'using Pkg; Pkg.instantiate()'
-#   julia --project=. test/runtests.jl
-#   julia --project=. -e 'include("src/pbasex_core.jl"); using .pBASEX'
-#
-# Why this has no `name`/`uuid` (i.e. it is an environment, not a package):
-# Julia resolves a package entry point as `src/<name>.jl`. The module implemented
-# in `src/pbasex_core.jl` is `pBASEX`, so a package would need `src/pBASEX.jl`.
-# That filename is identical to the existing `src/pbasex.jl` on case-insensitive
-# filesystems (Windows, default macOS), so declaring a package name here would
-# either collide with that file or force renaming existing sources.
-# The environment form keeps the documented entry point working unchanged:
-#   include("src/pbasex_core.jl"); using .pBASEX
+name = "pBASEX"
+uuid = "c378d021-f22a-41a2-8b8b-18f6716cb0a9"
+version = "0.1.0"
 
 [deps]
+DelimitedFiles = "8bb1440f-4735-579b-a4ab-409b98df4dab"
 HDF5 = "f67ccb44-e63f-5c2f-98bd-6dc0ccc4ba2f"
 LinearAlgebra = "37e2e46d-f89d-539d-b4ee-838fcccc9c8e"
 ProgressMeter = "92933f4c-e287-5a05-a399-4b506db050ca"
@@ -23,10 +12,17 @@ SHA = "ea8e919c-243c-51af-8825-aaa63cd721ce"
 Serialization = "9e88b42a-f829-5b0c-bbe9-9e923198166b"
 
 [compat]
+DelimitedFiles = "1"
 HDF5 = "0.16, 0.17"
 LinearAlgebra = "1"
 ProgressMeter = "1"
 QuadGK = "2"
 SHA = "0.7"
 Serialization = "1"
-julia = "1.10, 1.11"
+julia = "1.10"
+
+[extras]
+Test = "8dfed614-e22c-5e08-85e1-65c5234f0b40"
+
+[targets]
+test = ["Test"]

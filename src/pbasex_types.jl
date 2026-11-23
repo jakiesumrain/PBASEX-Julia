@@ -3,19 +3,10 @@ module PBASEXTypes
 using HDF5
 using Serialization
 using SHA
-using LinearAlgebra # Needed for svd
 
-# Include necessary functions (assuming they are defined elsewhere, e.g., basis_functions.jl)
-# If these are defined within this module or another included module, adjust accordingly.
-# We assume findG and findGinv are available in the scope where BASISData constructors are called.
-# If they are in other modules, they might need qualification (e.g., BasisFunctions.findG)
-# For now, we'll assume they are accessible.
-include("basis_functions.jl") # Assuming findG is here
-include("inverse_basis_functions.jl") # Assuming findGinv is here
-include("math_utils.jl") # Assuming meshgrid is here
-using .BasisFunctions: findG # Explicitly import if needed
-using .InverseBasisFunctions: findGinv # Explicitly import if needed
-using .MathUtils: meshgrid # Explicitly import if needed
+using ..BasisFunctions: findG
+using ..InverseBasisFunctions: findGinv
+using ..MathUtils: meshgrid
 
 export PBASEXResult, BASISData, generate_hashed_filename
 

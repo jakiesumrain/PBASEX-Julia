@@ -1,5 +1,4 @@
-include("../src/pbasex_core.jl")
-using .pBASEX
+using pBASEX
 #using CSV, DataFrames, HDF5
 
 # Define the basis function parameters

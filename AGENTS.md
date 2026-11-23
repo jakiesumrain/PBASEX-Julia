@@ -9,16 +9,11 @@ algorithm for inverting 2D photoelectron/photoion images from velocity map
 imaging experiments. It is a port of CPBASEX (MATLAB/Python), after Garcia,
 Nahon & Powis, *Rev. Sci. Instrum.* 75, 4989 (2004).
 
-Developed against Julia 1.11; 1.10 is also supported. The module is `pBASEX`,
-defined in `src/pbasex_core.jl`.
-
-This repository is a Julia project **environment**, not a registered package:
-`Project.toml` intentionally carries no `name`/`uuid`. See the comment at the top
-of `Project.toml` for the reason. The public API is therefore loaded with:
+The package requires Julia 1.10 or later in the Julia 1 series. Its module is
+defined in `src/pBASEX.jl`. With the project activated, load the public API with
 
 ```julia
-include("src/pbasex_core.jl")
-using .pBASEX
+using pBASEX
 ```
 
 ## Setup
@@ -32,16 +27,10 @@ julia --project=. -e 'using Pkg; Pkg.instantiate()'
 ## Tests
 
 ```bash
-julia --project=. test/runtests.jl
+julia --project=. -e 'using Pkg; Pkg.test()'
 ```
 
-`Pkg.test()` does not apply, because there is no package name/UUID.
-
-The unit tests deliberately avoid `findG`, the line-of-sight quadrature over
-every pixel and basis function that dominates runtime (minutes to hours at
-512x512). Keep it that way: tests must stay fast. If you add coverage that needs
-a real basis, use a tiny grid and a cached basis file under a temporary
-directory.
+Use a tiny grid and a temporary directory for tests that generate a basis.
 
 ## Git workflow
 
@@ -63,8 +52,7 @@ If direct GitHub access fails, use `HTTPS_PROXY=http://127.0.0.1:7897`.
 - `examples/image.txt` is a real 1023x1023 experimental image, about 25 MB of
   text. Treat it as read-only input data: do not regenerate, resample, trim, or
   replace it, and do not add other dataset files to the repository.
-- Each `src/*.jl` file is its own module and several are `include`d from more
-  than one place, so load order matters. Adding a new source file means adding
-  it to the `include` list in `src/pbasex_core.jl`.
+- Include each implementation file once from `src/pBASEX.jl`. Submodules
+  import shared definitions from their sibling modules.
 - Docstrings use Julia's `"""..."""` convention with a signature line, an
   `# Arguments` section, and a `# Returns` section. Match the surrounding style.

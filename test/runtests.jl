@@ -1,19 +1,14 @@
 # Unit tests for PBASEX-Julia.
 #
 # Run with:
-#     julia --project=. test/runtests.jl
+#     julia --project=. -e 'using Pkg; Pkg.test()'
 #
 # Instantiate the project first:
 #     julia --project=. -e 'using Pkg; Pkg.instantiate()'
 #
-# These tests intentionally avoid `findG`, the line-of-sight quadrature over
-# every pixel and basis function that dominates runtime (minutes to hours for a
-# 512x512 grid), so the whole suite finishes in well under a second.
-
+using pBASEX
+using pBASEX.MathUtils: meshgrid
 using Test
-
-include(joinpath(@__DIR__, "..", "src", "pbasex_core.jl"))
-using .pBASEX
 
 @testset "PBASEX.jl" begin
 
@@ -65,9 +60,9 @@ using .pBASEX
         @test all(folded .== 4.0)
 
         # A single selected quadrant is counted once.
-        only_tl = foldQuadrant(img, 3, 3; quadrant_filter = [1, 0, 0, 0])
-        @test size(only_tl) == (3, 3)
-        @test all(only_tl .== 1.0)
+        single_quadrant = foldQuadrant(img, 3, 3; quadrant_filter = [1, 0, 0, 0])
+        @test size(single_quadrant) == (3, 3)
+        @test all(single_quadrant .== 1.0)
 
         # Values add up as advertised for a non-uniform image.
         # Index [1, 1] is the folding centre, so it appears in all four
@@ -128,7 +123,7 @@ using .pBASEX
         # Deterministic for identical input.
         @test name == generate_hashed_filename(x, k, l)
 
-        # Sensitive to every part of the basis definition.
+        # Sensitive to the grid, radial centers, and angular orders.
         @test name != generate_hashed_filename(x, k, [0, 2, 4])
         @test name != generate_hashed_filename(x, [1.5, 6.5], l)
         @test name != generate_hashed_filename(collect(0:8), k, l)
@@ -147,6 +142,26 @@ using .pBASEX
         @test_throws AssertionError pbasex(rand(4, 4); alpha = 0.0)
         @test_throws AssertionError pbasex(rand(4, 4); center = (0, 2))
         @test_throws AssertionError pbasex(rand(4, 4); weights = ones(4, 3))
+    end
+
+    @testset "package inversion and cache round trip" begin
+        mktempdir() do dir
+            x = collect(0:7)
+            k = [1.5, 5.5]
+            l = [0, 2]
+            basis = joinpath(dir, "basis.h5")
+            data = BASISData{Float64}(basis; x, k, l)
+            coefficients = [2.0 0.5; 1.0 -0.2]
+            projection = data.U * (data.S .* (data.V' * vec(coefficients)))
+            image = unfoldQuadrant(reshape(projection, length(x), length(x)))
+
+            @test isfile(basis)
+            result = pbasex(image; basis, x, k, l)
+            @test result isa PBASEXResult{Float64}
+            @test result.coefficients ≈ coefficients
+            @test result.reconstructed_image ≈ image
+            @test size(result.inverted_image) == size(image)
+        end
     end
 
 end

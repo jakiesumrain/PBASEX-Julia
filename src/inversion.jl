@@ -14,9 +14,8 @@ module PBASEX
 
 using LinearAlgebra
 
-include("pbasex_types.jl")
-include("image_processing.jl")
-using .PBASEXTypes, .ImageProcessing
+using ..PBASEXTypes: BASISData, PBASEXResult
+using ..ImageProcessing: foldQuadrant, resizeFolded, unfoldQuadrant
 
 export pbasex
 
