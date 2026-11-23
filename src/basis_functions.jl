@@ -16,6 +16,20 @@ using ..MathUtils: meshgrid, leg
 
 export findG
 
+function cubic_bspline(r, k, params)
+    t = abs((r - k) / params[1])
+    if t < 1
+        return (4 - 6t^2 + 3t^3) / 6
+    elseif t < 2
+        return (2 - t)^3 / 6
+    end
+    return zero(t)
+end
+
+ray_distance(r, R) = r > R ? sqrt((r - R) * (r + R)) : zero(R)
+
+cubic_bspline_limit(R, k, params) = ray_distance(k + 2 * params[1], R)
+
 # --- Define a callable struct for the integrand ---
 struct GIntegrand{T, F_rBF, F_leg}
     R_pixel::T
@@ -48,6 +62,23 @@ function (integrand::GIntegrand)(u)
     return radial_part * angular_part
 end
 # --- End of Integrand Struct ---
+
+function projected_integral(f::GIntegrand{T}, zIP, rtol) where T
+    limit = zIP(f.R_pixel, f.k_val, f.params)
+    limit > sqrt(eps(T)) || return zero(T)
+    return first(quadgk(f, zero(T), T(limit); rtol))
+end
+
+function projected_integral(f::GIntegrand{T,typeof(cubic_bspline)},
+                            ::typeof(cubic_bspline_limit), rtol) where T
+    R, k, h = f.R_pixel, f.k_val, f.params[1]
+    R < k + 2h || return zero(T)
+
+    # Knots at or inside R all map to u=0. Keep just the last of those.
+    knots = ntuple(i -> ray_distance(k + (i - 3) * h, R), 5)
+    start = something(findlast(iszero, knots), 1)
+    return first(quadgk(f, knots[start:end]...; rtol))
+end
 
 """
     findG(X::AbstractVector, K::AbstractVector{T}, L::AbstractVector{Int}, 
@@ -83,15 +114,16 @@ the line-of-sight (related to the Abel transform).
 - For each pixel `(x, y)` and each basis function `(k, l)`:
     - Defines an integrand: `rBF(sqrt(u^2 + R^2), k, params) * P_l(y / sqrt(u^2 + R^2))`
       where `R = sqrt(x^2 + y^2)` is the projected radius and `u` is the integration variable (along the line of sight).
-    - Numerically integrates the integrand from `u = 0` to `u = zIP(R, k, params)` using `QuadGK.quadgk`.
+    - Integrates with `QuadGK.quadgk`. The built-in cubic B-spline uses its support
+      boundaries and polynomial knots as the integration endpoints.
 - Stores the integration results in an intermediate matrix.
 - Applies optional weights, transposes the matrix, and normalizes by `1 / (2*π)`.
 - After computing the intermediate weighted matrix, it calculates the SVD `G = U*diagm(S)*V'` 
   and returns U, S, V directly.
 """
-function findG(X::AbstractVector, K::AbstractVector{T}, L::AbstractVector{Int}, 
-             rBF::Function, zIP::Function, params::AbstractVector{T}, 
-             weights::Union{AbstractMatrix{T}, Nothing}) where T<:AbstractFloat
+function findG(X::AbstractVector, K::AbstractVector{T}, L::AbstractVector{Int},
+             rBF::F, zIP::Z, params::AbstractVector{T},
+             weights::Union{AbstractMatrix{T}, Nothing}) where {T<:AbstractFloat,F<:Function,Z<:Function}
 
     # Get lengths of input vectors
     lenX = length(X)
@@ -131,27 +163,8 @@ function findG(X::AbstractVector, K::AbstractVector{T}, L::AbstractVector{Int},
                 # --- Calculate basis index directly ---
                 basis_idx = (lind - 1) * lenK + q
 
-                z_limit_val = zIP(R_pixel, k_val, params)
-
-                # Check if integration is needed (e.g., z_limit might be negative/NaN from custom zIP)
-                # Also handle cases where z_limit is very small or zero.
-                if !isnan(z_limit_val) && z_limit_val > sqrt(eps(T)) # Integrate only if limit is valid and non-trivial
-                    
-                    # --- Create an instance of the integrand functor ---
-                    integrand_functor = GIntegrand(R_pixel, T(y_pixel), l_val, k_val, params, rBF, leg)
-
-                    # Perform numerical integration
-                    result, err = quadgk(integrand_functor, zero(T), T(z_limit_val); rtol)
-                    #result, err = quadgk(integrand_functor, zero(T), T(Inf), rtol=1e-8)
-
-                    # Optional: Add back the warning for high integration error if needed
-                    # if err > abs(result * 1e-4) ... end
-
-                    G_intermediate[basis_idx, ind] = result
-                else
-                    # If z_limit is invalid or effectively zero, the integral is zero
-                    G_intermediate[basis_idx, ind] = zero(T)
-                end
+                integrand = GIntegrand(R_pixel, y_pixel, l_val, k_val, params, rBF, leg)
+                G_intermediate[basis_idx, ind] = projected_integral(integrand, zIP, rtol)
             end # end loop over k (radial basis)
         end # end loop over l (angular basis)
         # Update progress meter (thread-safe)
@@ -176,14 +189,11 @@ function findG(X::AbstractVector, K::AbstractVector{T}, L::AbstractVector{Int},
     # Perform Singular Value Decomposition on the now-scaled G_intermediate
     # Use svd! for potential memory optimization, as G_intermediate is overwritten
     println("Performing SVD on scaled G_intermediate matrix (in-place)...") # Add feedback
-    F = svd!(G_intermediate)
+    factors = svd!(G_intermediate)
     println("SVD complete.")
     
     # Return the SVD components in the order equivalent to svd(transpose(scaled G_intermediate))
-    # U_of_G = F.V
-    # S_of_G = F.S
-    # V_of_G = F.U
-    return F.V, F.S, F.U 
+    return factors.V, factors.S, factors.U
 end
 
 end # module BasisFunctions

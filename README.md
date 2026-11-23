@@ -42,6 +42,8 @@ It uses `basis.h5` and writes `out.h5` in the working directory.
   regularization, weights, and output fields.
 - [Build and cache a basis](docs/bases.md) covers radial and angular settings,
   cache identity, memory requirements, and the HDF5 layout.
+- [Line-of-sight integration](docs/quadrature.md) explains how missed
+  quadrature samples can produce spurious low-energy peaks.
 - [Migrate from MATLAB CPBASEX](docs/matlab-migration.md) covers using an existing
   MATLAB basis, exporting a compatible basis from Julia, and the measured parity.
 - [Algorithm derivation](docs/pbasex.pdf) describes the Abel transform and polar

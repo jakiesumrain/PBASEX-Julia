@@ -4,7 +4,7 @@ using HDF5
 using Serialization
 using SHA
 
-using ..BasisFunctions: findG
+using ..BasisFunctions: findG, cubic_bspline, cubic_bspline_limit
 using ..InverseBasisFunctions: findGinv
 using ..MathUtils: meshgrid
 
@@ -29,7 +29,7 @@ struct PBASEXResult{T<:AbstractFloat}
 end
 
 """
-    BASISData{T}(; x, k, l, params, weights, rBF, zIP, make_images=true)
+    BASISData{T}(; x, k, l, radial_basis=:gaussian, params, weights, rBF, zIP, make_images=true)
     BASISData{T}(path; cache_key=nothing, kwargs...)
     BASISData(path; kwargs...)
 
@@ -39,8 +39,10 @@ projected basis. The radial table frk has one row per radial center.
 Ginv maps coefficients to a central slice and is omitted if
 make_images=false. Existing MATLAB CPBASEX basis files are supported.
 
-The directory cache includes the grid, radial centers, angular orders,
-parameters and pixel weights. Pass a stable cache_key when caching a
+Select `radial_basis=:cubic_bspline` for a compact cubic B-spline. Its first
+parameter is the knot spacing in pixels. The directory cache includes the
+basis family, grid, radial centers, angular orders, parameters and pixel
+weights. Pass a stable cache_key when caching a
 custom rBF or zIP in a directory. A custom basis without a key is computed
 in memory in directory mode. An explicit file can still store a custom
 basis and be reloaded by path.
@@ -65,6 +67,16 @@ function gaussian_limit(R, k::T, p) where T
     return sqrt(max(zero(T), (sqrt(T(20)) * p[1] + k)^2 - R^2))
 end
 
+function radial_functions(family)
+    family === :gaussian && return gaussian, gaussian_limit
+    family === :cubic_bspline && return cubic_bspline, cubic_bspline_limit
+    throw(ArgumentError("radial_basis must be :gaussian or :cubic_bspline"))
+end
+
+function radial_family(data)
+    return data.rBF === cubic_bspline && data.zIP === cubic_bspline_limit ? :cubic_bspline : :gaussian
+end
+
 function basis_definition(::Type{T}, options) where T
     x = collect(Int, get(options, :x, 0:511))
     isempty(x) && throw(ArgumentError("x must contain at least one grid point"))
@@ -72,19 +84,28 @@ function basis_definition(::Type{T}, options) where T
     isempty(k) && throw(ArgumentError("k must contain at least one radial center"))
     l = collect(Int, get(options, :l, (0, 2, 4)))
     !isempty(l) && all(>=(0), l) || throw(ArgumentError("l must contain nonnegative orders"))
-    params = collect(T, get(options, :params, [0.7 * length(x) / length(k)]))
+    family = get(options, :radial_basis, :gaussian)
+    default_rBF, default_zIP = radial_functions(family)
+    default_width = family === :gaussian ? 0.7 * length(x) / length(k) : length(x) / length(k)
+    params = collect(T, get(options, :params, [default_width]))
     weights = get(options, :weights, nothing)
     if !isnothing(weights)
         size(weights) == (length(x), length(x)) ||
             throw(ArgumentError("Basis weights must match the square grid"))
         weights = Matrix{T}(weights)
     end
-    rBF = get(options, :rBF, gaussian)::Function
-    zIP = get(options, :zIP, gaussian_limit)::Function
+    rBF = get(options, :rBF, default_rBF)::Function
+    zIP = get(options, :zIP, default_zIP)::Function
+    if haskey(options, :radial_basis) && (rBF !== default_rBF || zIP !== default_zIP)
+        throw(ArgumentError("Choose a built-in radial_basis or supply custom rBF and zIP"))
+    end
     all(isfinite, k) && all(isfinite, params) || throw(ArgumentError("k and params must be finite"))
     if rBF === gaussian || zIP === gaussian_limit
         !isempty(params) && first(params) > 0 ||
             throw(ArgumentError("The Gaussian basis requires a positive width"))
+    elseif family === :cubic_bspline
+        !isempty(params) && first(params) > 0 ||
+            throw(ArgumentError("The cubic B-spline requires a positive knot spacing"))
     end
     return (; x, k, l, params, weights, rBF, zIP)
 end
@@ -116,12 +137,16 @@ function BASISData{T}(path::AbstractString; make_images::Bool=true,
     options = (; kwargs...)
     if isdir(path)
         d = basis_definition(T, options)
-        custom = (d.rBF !== gaussian, d.zIP !== gaussian_limit)
+        family = radial_family(d)
+        default_rBF, default_zIP = radial_functions(family)
+        custom = (d.rBF !== default_rBF, d.zIP !== default_zIP)
         if any(custom) && isnothing(cache_key)
             return BASISData{T}(; make_images, d...)
         end
         identity = (d.params, d.weights, custom, isnothing(cache_key) ? nothing : String(cache_key))
-        filename = hashed_filename((:pbasex_v2, d.x, d.k, d.l, identity))
+        # Keep the existing names for Gaussian and custom caches.
+        cache_version = family === :gaussian ? :pbasex_v2 : :pbasex_cubic_bspline_v1
+        filename = hashed_filename((cache_version, d.x, d.k, d.l, identity))
         path = joinpath(path, filename)
         options = merge(options, d)
     end
@@ -154,9 +179,14 @@ function load_basis(::Type{T}, path, make_images, cache_key, options) where T
         weights = haskey(f, "weights") ? convert(Matrix{T}, read(f, "weights")) : nothing
         has_params = haskey(f, "params")
         params = has_params ? vec(T.(read(f, "params"))) : T[]
+        family = haskey(f, "radial_basis") ? Symbol(read(f, "radial_basis")) : :gaussian
+        default_rBF, default_zIP = radial_functions(family)
         custom = haskey(f, "custom_functions") ? Tuple(Bool.(read(f, "custom_functions"))) : (!has_params, !has_params)
         saved_key = haskey(f, "cache_key") ? read(f, "cache_key") : nothing
 
+        if haskey(options, :radial_basis) && (options[:radial_basis] !== family || any(custom))
+            throw(ArgumentError("Requested radial_basis does not match the basis in $path"))
+        end
         for (name, value) in pairs((; x, k, l))
             if haskey(options, name) && !isequal(collect(eltype(value), options[name]), value)
                 throw(ArgumentError("Requested $name does not match the basis in $path"))
@@ -174,9 +204,9 @@ function load_basis(::Type{T}, path, make_images, cache_key, options) where T
         if !isnothing(cache_key) && cache_key != saved_key
             throw(ArgumentError("Requested cache_key does not match the basis in $path"))
         end
-        rBF = get(options, :rBF, custom[1] ? unavailable_basis_function : gaussian)
-        zIP = get(options, :zIP, custom[2] ? unavailable_basis_function : gaussian_limit)
-        for (name, default, was_custom) in zip((:rBF, :zIP), (gaussian, gaussian_limit), custom)
+        rBF = get(options, :rBF, custom[1] ? unavailable_basis_function : default_rBF)
+        zIP = get(options, :zIP, custom[2] ? unavailable_basis_function : default_zIP)
+        for (name, default, was_custom) in zip((:rBF, :zIP), (default_rBF, default_zIP), custom)
             if haskey(options, name)
                 if (options[name] !== default) != was_custom || (was_custom && isnothing(cache_key))
                     throw(ArgumentError("Cannot verify $name against the basis in $path. Use its matching cache_key or load the saved functions' matrices by path."))
@@ -227,7 +257,10 @@ function save_basis_data(data::BASISData, path::AbstractString, cache_key)
                 value = getproperty(data, name)
                 isnothing(value) || write(f, String(name), value)
             end
-            write(f, "custom_functions", UInt8[data.rBF !== gaussian, data.zIP !== gaussian_limit])
+            family = radial_family(data)
+            default_rBF, default_zIP = radial_functions(family)
+            write(f, "custom_functions", UInt8[data.rBF !== default_rBF, data.zIP !== default_zIP])
+            family === :gaussian || write(f, "radial_basis", String(family))
             isnothing(cache_key) || write(f, "cache_key", String(cache_key))
         end
         try

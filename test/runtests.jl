@@ -257,4 +257,52 @@ using Test
         end
     end
 
+    @testset "compact cubic B-spline basis" begin
+        family = :cubic_bspline
+        # With R=0 and l=0, an entire cardinal spline has area h along the ray.
+        # This shell is narrow and far beyond the measured detector radius.
+        h = 0.25
+        distant = BASISData{Float64}(; x=0:3, k=[509.5], l=[0], params=[h],
+                                     radial_basis=family, make_images=false)
+        forward = distant.U * (distant.S .* distant.V')
+        @test forward[1, 1] ≈ h / (2π)
+        @test all(iszero, distant.frk)
+
+        x, k, l, params = 0:7, [1.5, 5.5], [0, 2], [1.0]
+        spline = BASISData{Float64}(; x, k, l, params, radial_basis=family)
+        @test spline.rBF(1.5, 1.5, params) ≈ 2/3
+        @test spline.rBF(2.5, 1.5, params) ≈ 1/6
+        @test spline.rBF(3.5, 1.5, params) == 0
+        @test spline.frk[1, 5] == 0
+        @test spline.Ginv[5, 1] == 0
+        @test spline.frk[1, 1] ≈ 1/48
+        centered = BASISData{Float32}(; x=0:3, k=[0], l=[0], params=[1], radial_basis=family)
+        @test eltype(centered.Ginv) === Float32
+        @test (centered.U * (centered.S .* centered.V'))[1, 1] ≈ 1f0 / (4f0 * Float32(π))
+        @test_throws ArgumentError BASISData{Float64}(; x, radial_basis=:unknown)
+        @test_throws ArgumentError BASISData{Float64}(; x, radial_basis=family, params=[0])
+
+        mktempdir() do dir
+            BASISData(dir; x, k, l, params, make_images=false)
+            cached = BASISData(dir; x, k, l, params, radial_basis=family, make_images=false)
+            @test length(readdir(dir)) == 2
+            @test cached.Ginv === nothing
+            @test cached.frk == spline.frk
+            restored = BASISData(dir; x, k, l, params, radial_basis=family)
+            @test restored.S == cached.S
+            @test restored.Ginv == spline.Ginv
+
+            c = [2.0 0.5; 1.0 -0.2]
+            projection = spline.U * (spline.S .* (spline.V' * vec(c)))
+            image = unfoldQuadrant(reshape(projection, length(x), length(x)))
+            path = joinpath(dir, "spline.h5")
+            result = pbasex(image; basis=path, x, k, l, params, radial_basis=family,
+                            make_images=false)
+            @test result.coefficients ≈ c
+            @test pbasex(image; basis=path).inverted_image ≈
+                  unfoldQuadrant(reshape(spline.Ginv * vec(c), length(x), length(x)))
+            @test_throws ArgumentError pbasex(image; basis=path, radial_basis=:gaussian)
+        end
+    end
+
 end
