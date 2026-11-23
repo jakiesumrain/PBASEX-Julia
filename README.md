@@ -420,7 +420,6 @@ PBASEX-Julia/
 ├── Project.toml                   # Package metadata and dependencies
 ├── src/
 │   ├── pBASEX.jl                   # Package entry point
-│   ├── pbasex_core.jl              # Compatibility entry point for include
 │   ├── inversion.jl                # pbasex() function, preprocessing
 │   ├── pbasex_types.jl             # BASISData, PBASEXResult definitions
 │   ├── basis_functions.jl          # findG() - forward transform
