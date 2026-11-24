@@ -10,11 +10,11 @@ using ProgressMeter
 
 using ..MathUtils: meshgrid, leg
 
-export findGinv
+export build_central_slice_basis
 
 """
-    findGinv(detector_coordinates, radial_centers, legendre_orders,
-             radial_profile, basis_parameters)
+    build_central_slice_basis(detector_coordinates, radial_centers, legendre_orders,
+                              radial_profile, basis_parameters)
 
 Build `Ginv`, the matrix that evaluates the fitted distribution in the central
 plane at line-of-sight coordinate zero. Each entry is the radial profile times
@@ -29,12 +29,12 @@ plane at line-of-sight coordinate zero. Each entry is the radial profile times
 
 # Returns
 A matrix with one row per slice pixel and one column per basis function.
-The radial center varies fastest among the columns, as in `findG`.
+The radial center varies fastest among the columns, as in `build_forward_basis`.
 Multiply `Ginv` by the fitted coefficient vector to recover the slice.
 """
-function findGinv(detector_coordinates::AbstractVector, radial_centers::AbstractVector{T},
-                  legendre_orders::AbstractVector{Int}, radial_profile::Function,
-                  basis_parameters::AbstractVector{T}) where T<:AbstractFloat
+function build_central_slice_basis(detector_coordinates::AbstractVector, radial_centers::AbstractVector{T},
+                                   legendre_orders::AbstractVector{Int}, radial_profile::Function,
+                                   basis_parameters::AbstractVector{T}) where T<:AbstractFloat
     # Flatten in column order so the radial center varies fastest.
     basis_order_grid, basis_center_grid = meshgrid(legendre_orders, radial_centers)
     basis_orders = vec(basis_order_grid)

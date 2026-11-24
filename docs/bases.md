@@ -23,7 +23,7 @@ saved Julia spline basis, pass its path to reuse the recorded family.
 For a MATLAB basis, pass its path and let the file supply the factors.
 
 ```julia
-using pBASEX
+using PBASEX
 
 basis_path = joinpath(mkpath("data"), "even-orders-0-4.h5")
 basis_data = BASISData(basis_path; x=0:511, l=[0, 2, 4])
@@ -62,7 +62,7 @@ Choose `radial_basis=:cubic_bspline` when creating a basis with `pbasex` or
 supply `rBF` and `zIP`.
 
 ```julia
-using pBASEX, DelimitedFiles
+using PBASEX, DelimitedFiles
 
 image = readdlm("examples/image.txt", Float64)
 result = pbasex(image; radial_basis=:cubic_bspline, make_images=false)
@@ -110,7 +110,7 @@ Passing only `rBF` keeps the Gaussian cutoff. The following small basis
 uses a Lorentzian profile and a corresponding finite integration limit.
 
 ```julia
-using pBASEX
+using PBASEX
 
 radial(r, k, p) = p[1]^2 / ((r - k)^2 + p[1]^2)
 limit(R, k, p) = sqrt(max(0.0, (k + 10 * p[1])^2 - R^2))
@@ -166,10 +166,10 @@ for the CPBASEX export layout.
 
 | Function | Use |
 | --- | --- |
-| `findG(x, k, l, rBF, zIP, params, weights)` | Build the forward operator and return its factors `U, S, V`. Pass `nothing` for an unweighted basis. |
-| `findGinv(x, k, l, rBF, params)` | Evaluate the central-slice basis. Multiply this matrix by the fitted coefficient vector. |
-| `foldQuadrant(image, column, row; quadrant_filter)` | Sum the selected quadrants for an image or stack. |
-| `resizeFolded(quadrant, nx)` | Crop or zero-pad the folded quadrant to the basis dimensions. |
-| `unfoldQuadrant(quadrant; center_offset=true, quadrant_count=4)` | Mirror a folded image and divide by the number of quadrants summed. |
+| `build_forward_basis(x, k, l, rBF, zIP, params, weights)` | Build the forward operator and return its factors `U, S, V`. Pass `nothing` for an unweighted basis. |
+| `build_central_slice_basis(x, k, l, rBF, params)` | Evaluate the central-slice basis. Multiply this matrix by the fitted coefficient vector. |
+| `fold_quadrants(image, column, row; quadrant_filter)` | Sum the selected quadrants for an image or stack. |
+| `resize_folded_quadrant(quadrant, nx)` | Crop or zero-pad the folded quadrant to the basis dimensions. |
+| `unfold_quadrant(quadrant; center_offset=true, quadrant_count=4)` | Mirror a folded image and divide by the number of quadrants summed. |
 | `leg(l, x)` | Evaluate Legendre polynomial `l` at a scalar or array of arguments. |
 | `generate_hashed_filename(x, k, l)` | Generate a hash from the three vectors. Automatic basis caches use additional metadata in their keys. |

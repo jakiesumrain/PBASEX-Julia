@@ -1,4 +1,4 @@
-using pBASEX
+using PBASEX
 
 detector_coordinates = collect(0:511)
 legendre_orders = collect(0:2:4)

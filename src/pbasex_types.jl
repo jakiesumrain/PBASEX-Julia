@@ -4,8 +4,8 @@ using HDF5
 using Serialization
 using SHA
 
-using ..BasisFunctions: findG, cubic_bspline, cubic_bspline_limit
-using ..InverseBasisFunctions: findGinv
+using ..BasisFunctions: build_forward_basis, cubic_bspline, cubic_bspline_limit
+using ..InverseBasisFunctions: build_central_slice_basis
 using ..MathUtils: meshgrid
 
 export PBASEXResult, BASISData, generate_hashed_filename
@@ -124,8 +124,8 @@ function BASISData{T}(; make_images::Bool=true, kwargs...) where {T<:AbstractFlo
     if all(key -> haskey(kwargs, key), (:U, :S, :V))
         U, S, V = kwargs[:U], kwargs[:S], kwargs[:V]
     else
-        U, S, V = findG(definition.x, definition.k, definition.l, definition.rBF,
-                        definition.zIP, definition.params, definition.weights)
+        U, S, V = build_forward_basis(definition.x, definition.k, definition.l, definition.rBF,
+                                      definition.zIP, definition.params, definition.weights)
     end
     radial_table = get(kwargs, :frk) do
         radius_grid, radial_center_grid = meshgrid(T.(definition.x), definition.k)
@@ -133,7 +133,7 @@ function BASISData{T}(; make_images::Bool=true, kwargs...) where {T<:AbstractFlo
     end
     slice_basis = if make_images
         get(kwargs, :Ginv) do
-            findGinv(definition.x, definition.k, definition.l, definition.rBF, definition.params)
+            build_central_slice_basis(definition.x, definition.k, definition.l, definition.rBF, definition.params)
         end
     else
         nothing
@@ -252,7 +252,8 @@ function load_basis(::Type{T}, path, make_images, cache_key, options) where T
             else
                 radial_profile === unavailable_basis_function &&
                     throw(ArgumentError("The basis in $path has no central-slice matrix or radial function"))
-                slice_basis = findGinv(detector_coordinates, radial_centers, legendre_orders, radial_profile, basis_parameters)
+                slice_basis = build_central_slice_basis(detector_coordinates, radial_centers,
+                                                        legendre_orders, radial_profile, basis_parameters)
             end
             size(slice_basis) == (pixel_count, basis_count) ||
                 throw(ArgumentError("Central-slice matrix has inconsistent dimensions in $path"))

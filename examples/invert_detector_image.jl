@@ -1,4 +1,4 @@
-using pBASEX
+using PBASEX
 using DelimitedFiles, HDF5
 
 legendre_orders = collect(0:2:4)

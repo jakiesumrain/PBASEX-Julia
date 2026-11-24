@@ -1,9 +1,9 @@
 module ImageProcessing
 
-export foldQuadrant, unfoldQuadrant, resizeFolded
+export fold_quadrants, unfold_quadrant, resize_folded_quadrant
 
 """
-    foldQuadrant(detector_image, center_column, center_row; quadrant_filter=[1, 1, 1, 1])
+    fold_quadrants(detector_image, center_column, center_row; quadrant_filter=[1, 1, 1, 1])
 
 Sum selected quadrants of a detector image or stack around the one-based
 center `(center_column, center_row)` in (column, row) order. The filter follows MATLAB CPBASEX
@@ -11,8 +11,8 @@ order: top-right, top-left, bottom-left, bottom-right. Each selected
 quadrant includes the center row and column. The result starts at the
 center and extends as far as the smallest selected quadrant in each direction.
 """
-function foldQuadrant(detector_image::AbstractArray{T,N}, center_column::Int, center_row::Int;
-                      quadrant_filter::Vector{Int}=[1, 1, 1, 1]) where {T,N}
+function fold_quadrants(detector_image::AbstractArray{T,N}, center_column::Int, center_row::Int;
+                        quadrant_filter::Vector{Int}=[1, 1, 1, 1]) where {T,N}
     @assert N in (2, 3) "Input must be a 2D or 3D array"
     @assert length(quadrant_filter) == 4 "quadrant_filter must have exactly 4 elements"
     @assert all(in((0, 1)), quadrant_filter) "quadrant_filter must contain only 0s or 1s"
@@ -39,14 +39,14 @@ function foldQuadrant(detector_image::AbstractArray{T,N}, center_column::Int, ce
 end
 
 """
-    unfoldQuadrant(folded_projection; center_offset=true, quadrant_count=4)
+    unfold_quadrant(folded_projection; center_offset=true, quadrant_count=4)
 
 Mirror a quadrant or stack in both directions and divide by the number of
 quadrants summed in `folded_projection`. With `center_offset=true`, the first row and column
 become the center of an odd-sized output. Set it to `false` to duplicate them.
 """
-function unfoldQuadrant(folded_projection::AbstractArray{T,N}; center_offset::Bool=true,
-                        quadrant_count::Int=4) where {T,N}
+function unfold_quadrant(folded_projection::AbstractArray{T,N}; center_offset::Bool=true,
+                         quadrant_count::Int=4) where {T,N}
     @assert N in (2, 3) "Input must be a 2D or 3D array"
     @assert 1 <= quadrant_count <= 4 "quadrant_count must be between 1 and 4"
     first_reflected_index = 1 + Int(center_offset)
@@ -59,12 +59,12 @@ function unfoldQuadrant(folded_projection::AbstractArray{T,N}; center_offset::Bo
 end
 
 """
-    resizeFolded(folded_projection, detector_side)
+    resize_folded_quadrant(folded_projection, detector_side)
 
 Resize a folded quadrant or stack to `detector_side × detector_side` by cropping or
 zero-padding each spatial dimension. The center stays at index `[1, 1]`.
 """
-function resizeFolded(folded_projection::AbstractArray{T,N}, detector_side::Int) where {T,N}
+function resize_folded_quadrant(folded_projection::AbstractArray{T,N}, detector_side::Int) where {T,N}
     @assert N in (2, 3) "Input must be a 2D or 3D array"
     @assert detector_side > 0 "Target size rmax must be positive"
     row_indices = 1:min(size(folded_projection, 1), detector_side)

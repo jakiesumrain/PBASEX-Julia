@@ -1,9 +1,9 @@
-module PBASEX
+module Inversion
 
 using LinearAlgebra
 
 using ..PBASEXTypes: BASISData, PBASEXResult, basis_grid
-using ..ImageProcessing: foldQuadrant, resizeFolded, unfoldQuadrant
+using ..ImageProcessing: fold_quadrants, resize_folded_quadrant, unfold_quadrant
 
 export pbasex
 
@@ -61,9 +61,9 @@ function pbasex(image::AbstractMatrix{T};
         if !isnothing(basis_data.weights)
             projected_pixels ./= replace(vec(basis_data.weights), zero(T) => T(NaN))
         end
-        reconstructed_image = unfoldQuadrant(reshape(projected_pixels, detector_side, detector_side))
+        reconstructed_image = unfold_quadrant(reshape(projected_pixels, detector_side, detector_side))
         slice_pixels = (basis_data.Ginv::Matrix{T}) * coefficient_vector
-        inverted_image = unfoldQuadrant(reshape(slice_pixels, detector_side, detector_side))
+        inverted_image = unfold_quadrant(reshape(slice_pixels, detector_side, detector_side))
         if size(reconstructed_image) == size(image) && fit_input.center == (detector_side, detector_side)
             residuals = image .- reconstructed_image
         else
@@ -101,7 +101,7 @@ function pre_process_image(image::AbstractMatrix{T}, basis_file, options) where 
     end
     haskey(options, :l) && validate_angular_orders(options[:l])
 
-    folded_projection = foldQuadrant(image, center...; quadrant_filter=quadrant_filter)
+    folded_projection = fold_quadrants(image, center...; quadrant_filter=quadrant_filter)
     basis_path = isnothing(basis_file) ? mkpath(joinpath(dirname(@__DIR__), "data")) : basis_file
     detector_coordinates = if haskey(options, :x)
         collect(Int, options[:x])
@@ -113,12 +113,12 @@ function pre_process_image(image::AbstractMatrix{T}, basis_file, options) where 
     detector_side = length(detector_coordinates)
     # Preserve MATLAB's scale for a four-quadrant sum when fewer are selected.
     quadrant_normalization = T(4) / sum(quadrant_filter)
-    fit_pixels = resizeFolded(folded_projection, detector_side) .* quadrant_normalization
+    fit_pixels = resize_folded_quadrant(folded_projection, detector_side) .* quadrant_normalization
     fit_weights = if isnothing(weights)
         nothing
     else
-        folded_pixel_weights = foldQuadrant(weights, center...; quadrant_filter=quadrant_filter)
-        resizeFolded(folded_pixel_weights, detector_side) .* quadrant_normalization
+        folded_pixel_weights = fold_quadrants(weights, center...; quadrant_filter=quadrant_filter)
+        resize_folded_quadrant(folded_pixel_weights, detector_side) .* quadrant_normalization
     end
     # Weight the measured projection consistently with the forward operator.
     if !isnothing(fit_weights)
@@ -131,4 +131,4 @@ function pre_process_image(image::AbstractMatrix{T}, basis_file, options) where 
     return (; fit_pixels, basis_path, basis_options, make_images, regularization, energy_scale, center)
 end
 
-end # module PBASEX
+end # module Inversion

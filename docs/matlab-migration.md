@@ -11,7 +11,7 @@ Pass a CPBASEX HDF5 basis containing `Up` to `pbasex`. Julia reads its grid
 and handles the CPBASEX matrix orientations.
 
 ```julia
-using pBASEX, DelimitedFiles
+using PBASEX, DelimitedFiles
 
 image = readdlm("examples/image.txt", Float64)
 matlab_basis = "data/pbasex-matlab/examples/G_r512_k128_l10.h5"
@@ -47,7 +47,7 @@ Gaussian width, and angular orders as the 512-radius comparison. It writes a
 CPBASEX-compatible HDF5 file in a separate output directory.
 
 ```julia
-using pBASEX, HDF5
+using PBASEX, HDF5
 
 x = collect(0:511)
 k = collect(1.5:4:509.5)

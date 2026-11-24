@@ -10,10 +10,10 @@ imaging experiments. It is a port of CPBASEX (MATLAB/Python), after Garcia,
 Nahon & Powis, *Rev. Sci. Instrum.* 75, 4989 (2004).
 
 The package requires Julia 1.10 or later in the Julia 1 series. Its module is
-defined in `src/pBASEX.jl`. With the project activated, load the public API with
+defined in `src/PBASEX.jl`. With the project activated, load the public API with
 
 ```julia
-using pBASEX
+using PBASEX
 ```
 
 ## Setup
@@ -52,7 +52,7 @@ If direct GitHub access fails, use `HTTPS_PROXY=http://127.0.0.1:7897`.
 - `examples/image.txt` is a real 1023x1023 experimental image, about 25 MB of
   text. Treat it as read-only input data: do not regenerate, resample, trim, or
   replace it, and do not add other dataset files to the repository.
-- Include each implementation file once from `src/pBASEX.jl`. Submodules
+- Include each implementation file once from `src/PBASEX.jl`. Submodules
   import shared definitions from their sibling modules.
 - Docstrings use Julia's `"""..."""` convention with a signature line, an
   `# Arguments` section, and a `# Returns` section. Match the surrounding style.

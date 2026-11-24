@@ -6,8 +6,8 @@
 # Instantiate the project first:
 #     julia --project=. -e 'using Pkg; Pkg.instantiate()'
 #
-using pBASEX
-using pBASEX.MathUtils: meshgrid
+using PBASEX
+using PBASEX.MathUtils: meshgrid
 using HDF5
 using Test
 
@@ -52,73 +52,73 @@ using Test
         @test Y == [4 4 4; 5 5 5]
     end
 
-    @testset "foldQuadrant" begin
+    @testset "fold_quadrants" begin
         img = ones(5, 5)
 
         # All four quadrants are summed onto the first one.
-        folded = foldQuadrant(img, 3, 3)
+        folded = fold_quadrants(img, 3, 3)
         @test size(folded) == (3, 3)
         @test all(folded .== 4.0)
 
         # A single selected quadrant is counted once.
-        single_quadrant = foldQuadrant(img, 3, 3; quadrant_filter = [1, 0, 0, 0])
+        single_quadrant = fold_quadrants(img, 3, 3; quadrant_filter = [1, 0, 0, 0])
         @test size(single_quadrant) == (3, 3)
         @test all(single_quadrant .== 1.0)
         labeled = [11 12 13; 21 22 23; 31 32 33]
         for (i, corner) in enumerate((13, 11, 31, 33))
             filter = [Int(i == j) for j in 1:4]
-            @test foldQuadrant(labeled, 2, 2; quadrant_filter=filter)[2, 2] == corner
+            @test fold_quadrants(labeled, 2, 2; quadrant_filter=filter)[2, 2] == corner
         end
-        @test_throws AssertionError foldQuadrant(img, 3, 3; quadrant_filter=zeros(Int, 4))
+        @test_throws AssertionError fold_quadrants(img, 3, 3; quadrant_filter=zeros(Int, 4))
 
         # Values add up as advertised for a non-uniform image.
         # Index [1, 1] is the folding centre, so it appears in all four
         # quadrants; index [3, 3] is the far corner, so it gathers the four
         # corners of the original image.
         graded = reshape(1.0:25.0, 5, 5)
-        summed = foldQuadrant(graded, 3, 3)
+        summed = fold_quadrants(graded, 3, 3)
         @test summed[1, 1] == 4 * graded[3, 3]
         @test summed[3, 3] ==
               graded[1, 1] + graded[1, 5] + graded[5, 1] + graded[5, 5]
 
-        @test_throws AssertionError foldQuadrant(img, 3, 3; quadrant_filter = [1, 0])
-        @test_throws AssertionError foldQuadrant(img, 0, 3)
-        @test_throws AssertionError foldQuadrant(img, 3, 6)
+        @test_throws AssertionError fold_quadrants(img, 3, 3; quadrant_filter = [1, 0])
+        @test_throws AssertionError fold_quadrants(img, 0, 3)
+        @test_throws AssertionError fold_quadrants(img, 3, 6)
     end
 
-    @testset "unfoldQuadrant" begin
+    @testset "unfold_quadrant" begin
         folded = fill(4.0, 3, 3)
 
-        unfolded = unfoldQuadrant(folded)          # center_offset = true
+        unfolded = unfold_quadrant(folded)          # center_offset = true
         @test size(unfolded) == (5, 5)
         @test all(unfolded .≈ 1.0)                 # divided by the 4 quadrants
 
         # Folding then unfolding a fourfold-symmetric image is the identity.
         original = ones(5, 5)
-        @test unfoldQuadrant(foldQuadrant(original, 3, 3)) ≈ original
-        @test unfoldQuadrant(ones(3, 3); quadrant_count=1) == original
-        @test unfoldQuadrant(ones(3, 3, 2); center_offset=false, quadrant_count=1) == ones(6, 6, 2)
-        @test_throws AssertionError unfoldQuadrant(folded; quadrant_count=0)
+        @test unfold_quadrant(fold_quadrants(original, 3, 3)) ≈ original
+        @test unfold_quadrant(ones(3, 3); quadrant_count=1) == original
+        @test unfold_quadrant(ones(3, 3, 2); center_offset=false, quadrant_count=1) == ones(6, 6, 2)
+        @test_throws AssertionError unfold_quadrant(folded; quadrant_count=0)
 
-        @test_throws AssertionError unfoldQuadrant(ones(1, 1))
+        @test_throws AssertionError unfold_quadrant(ones(1, 1))
     end
 
-    @testset "resizeFolded" begin
+    @testset "resize_folded_quadrant" begin
         grid = reshape(1.0:16.0, 4, 4)
 
-        cropped = resizeFolded(grid, 2)
+        cropped = resize_folded_quadrant(grid, 2)
         @test size(cropped) == (2, 2)
         @test cropped == grid[1:2, 1:2]            # anchored top-left
 
-        padded = resizeFolded(ones(2, 2), 4)
+        padded = resize_folded_quadrant(ones(2, 2), 4)
         @test size(padded) == (4, 4)
         @test padded[1:2, 1:2] == ones(2, 2)
         @test all(padded[3:4, :] .== 0.0)
         @test all(padded[:, 3:4] .== 0.0)
 
-        @test resizeFolded(ones(2, 4), 3) == [1 1 1; 1 1 1; 0 0 0]
-        @test resizeFolded(ones(2, 4, 2), 3)[:, :, 2] == [1 1 1; 1 1 1; 0 0 0]
-        @test_throws AssertionError resizeFolded(ones(2, 2), 0)
+        @test resize_folded_quadrant(ones(2, 4), 3) == [1 1 1; 1 1 1; 0 0 0]
+        @test resize_folded_quadrant(ones(2, 4, 2), 3)[:, :, 2] == [1 1 1; 1 1 1; 0 0 0]
+        @test_throws AssertionError resize_folded_quadrant(ones(2, 2), 0)
     end
 
     @testset "basis cache filenames" begin
@@ -167,7 +167,7 @@ using Test
             data = BASISData{Float64}(basis; x, k, l)
             coefficients = [2.0 0.5; 1.0 -0.2]
             projection = data.U * (data.S .* (data.V' * vec(coefficients)))
-            image = unfoldQuadrant(reshape(projection, length(x), length(x)))
+            image = unfold_quadrant(reshape(projection, length(x), length(x)))
 
             @test isfile(basis)
             result = pbasex(image; basis)
@@ -294,13 +294,13 @@ using Test
 
             c = [2.0 0.5; 1.0 -0.2]
             projection = spline.U * (spline.S .* (spline.V' * vec(c)))
-            image = unfoldQuadrant(reshape(projection, length(x), length(x)))
+            image = unfold_quadrant(reshape(projection, length(x), length(x)))
             path = joinpath(dir, "spline.h5")
             result = pbasex(image; basis=path, x, k, l, params, radial_basis=family,
                             make_images=false)
             @test result.coefficients ≈ c
             @test pbasex(image; basis=path).inverted_image ≈
-                  unfoldQuadrant(reshape(spline.Ginv * vec(c), length(x), length(x)))
+                  unfold_quadrant(reshape(spline.Ginv * vec(c), length(x), length(x)))
             @test_throws ArgumentError pbasex(image; basis=path, radial_basis=:gaussian)
         end
     end

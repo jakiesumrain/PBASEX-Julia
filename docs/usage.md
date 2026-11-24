@@ -5,7 +5,7 @@ Use a square `Float64` or `Float32` matrix of finite intensities whose rows and
 columns follow the detector image. One `pbasex` call processes one image.
 
 ```julia
-using pBASEX, DelimitedFiles
+using PBASEX, DelimitedFiles
 
 image = readdlm("examples/image.txt", Float64)
 result = pbasex(image; center=(512, 512), make_images=false)

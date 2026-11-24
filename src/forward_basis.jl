@@ -13,7 +13,7 @@ using ProgressMeter
 
 using ..MathUtils: meshgrid, leg
 
-export findG
+export build_forward_basis
 
 function cubic_bspline(radius, radial_center, basis_parameters)
     knot_offset = abs((radius - radial_center) / basis_parameters[1])
@@ -73,8 +73,8 @@ function projected_integral(integrand::GIntegrand{T,typeof(cubic_bspline)},
 end
 
 """
-    findG(detector_coordinates, radial_centers, legendre_orders,
-          radial_profile, line_of_sight_limit, basis_parameters, weights)
+    build_forward_basis(detector_coordinates, radial_centers, legendre_orders,
+                        radial_profile, line_of_sight_limit, basis_parameters, weights)
 
 Build the forward operator `G` mapping basis coefficients to a folded detector
 projection. Each entry integrates a radial profile times `Pₗ(cos θ)` along
@@ -95,10 +95,10 @@ The thin SVD `(U, S, V)` of `G`, with `G = U * Diagonal(S) * V'`. Rows of
 `G` follow column-major detector order. The radial center varies fastest
 among its columns.
 """
-function findG(detector_coordinates::AbstractVector, radial_centers::AbstractVector{T},
-               legendre_orders::AbstractVector{Int}, radial_profile::F, line_of_sight_limit::Z,
-               basis_parameters::AbstractVector{T},
-               weights::Union{AbstractMatrix{T}, Nothing}) where {T<:AbstractFloat,F<:Function,Z<:Function}
+function build_forward_basis(detector_coordinates::AbstractVector, radial_centers::AbstractVector{T},
+                             legendre_orders::AbstractVector{Int}, radial_profile::F,
+                             line_of_sight_limit::Z, basis_parameters::AbstractVector{T},
+                             weights::Union{AbstractMatrix{T},Nothing}) where {T<:AbstractFloat,F<:Function,Z<:Function}
     detector_side = length(detector_coordinates)
     radial_count = length(radial_centers)
     angular_count = length(legendre_orders)
