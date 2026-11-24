@@ -29,10 +29,13 @@ result = pbasex(image; basis=basis_path, make_images=false)
 writedlm("energy-spectrum.txt", hcat(result.E, result.IE), '\t')
 ```
 
-Choose a basis filename and pass its path to every inversion. The first run
-creates that file, and later runs reuse it. The default energy axis is radius
-squared in pixel². Pass
-`alpha` to convert it to your calibrated energy units.
+Pass a basis filename to every inversion. PBASEX creates the file at a new
+path and reuses it on later runs. To change the grid, radial basis, or
+weights, choose a new filename. You can also pass the path to a Julia or
+MATLAB basis you already have. [Choose or reuse a basis](docs/bases.md#select-a-basis)
+
+The default energy axis is radius squared in pixel². Pass `alpha` to convert
+it to your calibrated energy units.
 
 For your own images, align the polarization axis with the vertical image
 axis before fitting. The Gaussian basis is the default. Select

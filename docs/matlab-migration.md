@@ -14,16 +14,18 @@ and handles the CPBASEX matrix orientations.
 using PBASEX, DelimitedFiles
 
 image = readdlm("examples/image.txt", Float64)
-matlab_basis = "data/pbasex-matlab/examples/G_r512_k128_l10.h5"
+matlab_basis = "data/pbasex-matlab/examples/G_r512_k256_l10.h5"
+isfile(matlab_basis) || error("Set matlab_basis to an existing CPBASEX HDF5 file.")
 result = pbasex(image; basis=matlab_basis, center=(512, 512),
                 alpha=1.0, reg=0.0, make_images=false)
 writedlm("energy-spectrum.txt", hcat(result.E, result.IE), '\t')
 ```
 
-The basis file in this example is a local input. Place your own CPBASEX file
-at that path or change `matlab_basis` to match its location. Use the `alpha`
-from your MATLAB analysis explicitly, since the two implementations can
-have different defaults.
+Set `matlab_basis` to the path of your CPBASEX file. The guard ensures a
+mistyped path stops the script before PBASEX tries to generate a new basis.
+Leave the basis settings to the file, which may lack metadata such as the
+original Gaussian width. Pass the `alpha` from your MATLAB analysis
+explicitly to preserve its energy scale.
 
 | MATLAB CPBASEX | Julia |
 | --- | --- |

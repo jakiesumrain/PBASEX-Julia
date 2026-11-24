@@ -12,31 +12,42 @@ evaluate the radial profiles and central slice.
 | Existing HDF5 file | Read the grid and factors from that file. Explicitly supplied settings must agree with the file's metadata. Julia and MATLAB CPBASEX layouts are supported. |
 | New HDF5 path | Compute and save the basis at that path. The parent directory must exist. |
 
-Pass a filename to `pbasex` and reuse its path across images. Previously
-generated basis files can be opened by their existing filenames. Use
-`BASISData(path)` to load or save a named basis, or `BASISData(; x, k, l)`
-to compute one in memory. Both default to `Float64`. Use
-`BASISData{Float32}` for single precision.
-
-The `radial_basis` keyword selects a family when building a basis. For a
-saved Julia spline basis, pass its path to reuse the recorded family.
-For a MATLAB basis, pass its path and let the file supply the factors.
+Choose a filename that identifies the definition you used. For example,
+`gaussian_r512_k256_l10_sigma1p6.h5` identifies a 512-point detector grid,
+256 radial centers, even Legendre orders through 10, and a Gaussian width
+of 1.6 px. PBASEX reads the definition from the HDF5 file.
 
 ```julia
 using PBASEX
 
-basis_path = joinpath(mkpath("data"), "even-orders-0-4.h5")
-basis_data = BASISData(basis_path; x=0:511, l=[0, 2, 4])
-# Reuse the path after loading an image.
-# result = pbasex(image; basis=basis_path, make_images=false)
+basis_path = joinpath(mkpath("data"), "gaussian_r512_k256_l10_sigma1p6.h5")
+basis_data = BASISData(basis_path; x=0:511, k=0.5:2:510.5, l=0:2:10, params=[1.6])
 ```
 
-Basis reuse is independent of `alpha` and `reg`. For named weighted bases,
-pass the same original weights and preprocessing options when calling
-`pbasex`. If you precompute a weighted basis with `BASISData`, pass the
-processed weight quadrant of size `length(x) × length(x)`. Legacy Julia files
-without weight metadata load as unweighted. Regenerate any legacy basis
-originally built with weights.
+Pass that path to `pbasex(image; basis=basis_path)` after loading an image.
+An existing file supplies its basis settings. If you also pass settings
+that conflict with the file, PBASEX raises an `ArgumentError`. Use a new
+path when you change the basis definition. You can change `alpha` and
+`reg` while reusing the same file.
+
+Use `BASISData(; x, k, l)` to build in memory. Both constructors default to
+`Float64`. Use `BASISData{Float32}` for single precision.
+
+### Migrate an existing script
+
+Replace an omitted `basis` argument or a basis directory with the path to
+one HDF5 file. You can use a previously generated hash-named file by passing
+its full path. When loading a MATLAB basis, let the file supply the grid
+and matrices. Omit `params` or `radial_basis` if the file cannot verify them.
+[MATLAB basis files](matlab-migration.md#reuse-a-matlab-basis-in-julia)
+
+### Reuse a weighted basis
+
+Pass the same original weights and preprocessing options to `pbasex`.
+When building a weighted basis with `BASISData`, supply the processed
+weight quadrant of size `length(x) × length(x)`. Legacy Julia files without
+weight metadata load as unweighted. Regenerate any legacy basis originally
+built with weights.
 
 ## Set the basis definition
 
