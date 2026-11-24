@@ -1,14 +1,13 @@
 module PBASEXTypes
 
 using HDF5
-using Serialization
-using SHA
+using FileWatching.Pidfile: trymkpidlock
 
 using ..BasisFunctions: build_forward_basis, cubic_bspline, cubic_bspline_limit
 using ..InverseBasisFunctions: build_central_slice_basis
 using ..MathUtils: meshgrid
 
-export PBASEXResult, BASISData, generate_hashed_filename
+export PBASEXResult, BASISData
 
 """
     PBASEXResult{T}
@@ -33,9 +32,10 @@ end
 """
     BASISData{T}(; x, k, l, radial_basis=:gaussian, params, weights, rBF, zIP, make_images=true)
     BASISData{T}(path; cache_key=nothing, kwargs...)
-    BASISData(path; kwargs...)
+    BASISData([path]; kwargs...)
 
-Compute a basis, cache it in a directory, or load it from an explicit file.
+Compute a basis in memory or supply a file path to load or save it.
+If the file exists, any specified basis settings must match its metadata.
 The fields `x`, `k`, and `l` give the detector coordinates, radial basis
 centers, and Legendre orders. The columns of `U` and `V` are the left and
 right singular vectors of the forward operator. `S` holds the singular
@@ -44,12 +44,9 @@ per sampled radius. `Ginv` maps coefficients to a central slice and is
 omitted if `make_images=false`. Existing MATLAB CPBASEX files are supported.
 
 Select `radial_basis=:cubic_bspline` for a compact cubic B-spline. Its first
-parameter is the knot spacing in pixels. The directory cache includes the
-basis family, grid, radial centers, angular orders, parameters and pixel
-weights. Pass a stable cache_key when caching a
-custom rBF or zIP in a directory. A custom basis without a key is computed
-in memory in directory mode. An explicit file can still store a custom
-basis and be reloaded by path.
+parameter is the knot spacing in pixels. For a custom `rBF` or `zIP`,
+`cache_key` records an optional identity string. Supply the same string
+if you pass the original functions again when opening the file.
 """
 struct BASISData{T<:AbstractFloat}
     x::Vector{Int}
@@ -143,30 +140,18 @@ function BASISData{T}(; make_images::Bool=true, kwargs...) where {T<:AbstractFlo
                         radial_table, slice_basis)
 end
 
+BASISData(; kwargs...) = BASISData{Float64}(; kwargs...)
+
 function BASISData{T}(path::AbstractString; make_images::Bool=true,
                       cache_key::Union{AbstractString,Nothing}=nothing, kwargs...) where {T<:AbstractFloat}
-    options = (; kwargs...)
-    if isdir(path)
-        definition = basis_definition(T, options)
-        family = radial_family(definition)
-        default_radial_profile, default_line_of_sight_limit = radial_functions(family)
-        custom_functions = (definition.rBF !== default_radial_profile, definition.zIP !== default_line_of_sight_limit)
-        if any(custom_functions) && isnothing(cache_key)
-            return BASISData{T}(; make_images, definition...)
-        end
-        basis_identity = (definition.params, definition.weights, custom_functions, isnothing(cache_key) ? nothing : String(cache_key))
-        # Keep the existing names for Gaussian and custom caches.
-        cache_version = family === :gaussian ? :pbasex_v2 : :pbasex_cubic_bspline_v1
-        filename = hashed_filename((cache_version, definition.x, definition.k, definition.l, basis_identity))
-        path = joinpath(path, filename)
-        options = merge(options, definition)
-    end
-    isfile(path) && return load_basis(T, path, make_images, cache_key, options)
+    isdir(path) && throw(ArgumentError("Choose a basis filename inside $path"))
+    isfile(path) && return load_basis(T, path, make_images, cache_key, kwargs)
     isdir(dirname(abspath(path))) || throw(ArgumentError("Parent directory of basis file does not exist: $path"))
 
-    data = BASISData{T}(; make_images, options...)
-    save_basis_data(data, path, cache_key)
-    return data
+    data = BASISData{T}(; make_images, kwargs...)
+    save_basis_data(data, path, cache_key) && return data
+    isfile(path) || throw(ArgumentError("Another process is publishing the basis at $path. Retry once the file is available."))
+    return load_basis(T, path, make_images, cache_key, kwargs)
 end
 
 BASISData(path::AbstractString; kwargs...) = BASISData{Float64}(path; kwargs...)
@@ -266,7 +251,7 @@ end
 
 function save_basis_data(data::BASISData, path::AbstractString, cache_key)
     # Write in the destination directory so a reader never opens a partial file.
-    mktemp(dirname(abspath(path))) do temp, io
+    return mktemp(dirname(abspath(path))) do temp, io
         close(io)
         h5open(temp, "w") do f
             for name in (:x, :k, :l, :params, :weights, :U, :S, :V, :frk, :Ginv)
@@ -276,33 +261,16 @@ function save_basis_data(data::BASISData, path::AbstractString, cache_key)
             family = radial_family(data)
             default_rBF, default_zIP = radial_functions(family)
             write(f, "custom_functions", UInt8[data.rBF !== default_rBF, data.zIP !== default_zIP])
-            family === :gaussian || write(f, "radial_basis", String(family))
+            write(f, "radial_basis", String(family))
             isnothing(cache_key) || write(f, "cache_key", String(cache_key))
         end
-        try
+        # Serialize publication when different processes choose the same filename.
+        trymkpidlock(abspath(path) * ".lock") do
+            isfile(path) && return false
             mv(temp, path)
-        catch err
-            isfile(path) || rethrow(err)
-            # A competing writer already published a complete cache.
+            return true
         end
     end
-end
-
-"""
-    generate_hashed_filename(x, k, l; prefix="BASISData_", suffix=".h5")
-
-Return an SHA-256 filename derived from the three grid vectors.
-Basis directory caches also include parameters, weights, and custom-basis identity.
-"""
-function generate_hashed_filename(x::AbstractVector, k::AbstractVector, l::AbstractVector;
-                                  prefix::String="BASISData_", suffix::String=".h5")
-    return hashed_filename((collect(Int, x), collect(k), collect(Int, l)); prefix, suffix)
-end
-
-function hashed_filename(values; prefix="BASISData_", suffix=".h5")
-    buffer = IOBuffer()
-    serialize(buffer, values)
-    return prefix * bytes2hex(sha256(take!(buffer))) * suffix
 end
 
 end # module PBASEXTypes

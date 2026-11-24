@@ -24,13 +24,18 @@ two columns to a text file.
 using PBASEX, DelimitedFiles
 
 image = readdlm("examples/image.txt", Float64)
-result = pbasex(image; make_images=false)
+basis_path = joinpath(mkpath("data"), "gaussian_r512_k128_l4.h5")
+result = pbasex(image; basis=basis_path, make_images=false)
 writedlm("energy-spectrum.txt", hcat(result.E, result.IE), '\t')
 ```
 
-The first run builds a basis and caches it in `data/`. Later runs can reuse
-that cache. The default energy axis is radius squared in pixel². Pass
-`alpha` to convert it to your calibrated energy units.
+Pass a basis filename to every inversion. PBASEX creates the file at a new
+path and reuses it on later runs. To change the grid, radial basis, or
+weights, choose a new filename. You can also pass the path to a Julia or
+MATLAB basis you already have. [Choose or reuse a basis](docs/bases.md#select-a-basis)
+
+The default energy axis is radius squared in pixel². Pass `alpha` to convert
+it to your calibrated energy units.
 
 For your own images, align the polarization axis with the vertical image
 axis before fitting. The Gaussian basis is the default. Select
@@ -50,8 +55,8 @@ julia --project=. --threads=auto examples/invert_detector_image.jl
 
 - [Run an inversion](docs/usage.md) covers image coordinates, quadrant selection,
   regularization, weights, and output fields.
-- [Build and cache a basis](docs/bases.md) covers radial and angular settings,
-  cache identity, memory requirements, and the HDF5 layout.
+- [Build and save a basis](docs/bases.md) covers radial and angular settings,
+  file reuse, memory requirements, and the HDF5 layout.
 - [Line-of-sight integration](docs/quadrature.md) explains how missed
   quadrature samples can produce spurious low-energy peaks.
 - [Migrate from MATLAB CPBASEX](docs/matlab-migration.md) covers using an existing

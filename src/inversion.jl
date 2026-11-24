@@ -8,7 +8,7 @@ using ..ImageProcessing: fold_quadrants, resize_folded_quadrant, unfold_quadrant
 export pbasex
 
 """
-    pbasex(image; basis=nothing, options...) -> PBASEXResult
+    pbasex(image; basis, options...) -> PBASEXResult
 
 Invert a square floating-point detector image with reflection symmetry about
 both image axes. Align the polarization axis vertically along the detector's
@@ -16,18 +16,17 @@ both image axes. Align the polarization axis vertically along the detector's
 Use `center=(column, row)` and `quadrant_filter` to select the input pixels.
 Selected quadrants are normalized to the same scale as the four-quadrant sum.
 
-Pass an existing Julia or MATLAB CPBASEX HDF5 basis file to use its grid and
-precomputed matrices. An existing directory stores bases by definition.
-Select `radial_basis=:cubic_bspline` for a compact radial basis when building
-a new cache. The default is Gaussian. With `basis=nothing`, use the package's
-data directory. Pass `make_images=false` to calculate only spectra, anisotropies,
-and coefficients.
+Pass a Julia or MATLAB CPBASEX HDF5 file path as `basis`. An existing
+file supplies the grid and matrices. A new path creates a file using
+the requested basis settings. Select `radial_basis=:cubic_bspline` to
+build a compact radial basis. The default is Gaussian. Pass
+`make_images=false` to calculate only spectra, anisotropies, and coefficients.
 """
 function pbasex(image::AbstractMatrix{T};
-                basis::Union{AbstractString,Nothing}=nothing,
+                basis::AbstractString,
                 options...) where {T<:AbstractFloat}
     fit_input = pre_process_image(image, basis, options)
-    basis_data = BASISData{T}(fit_input.basis_path; fit_input.basis_options..., fit_input.make_images)
+    basis_data = BASISData{T}(basis; fit_input.basis_options..., fit_input.make_images)
     detector_coordinates, radial_centers, legendre_orders = basis_data.x, basis_data.k, basis_data.l
     validate_angular_orders(legendre_orders)
     detector_side = length(detector_coordinates)
@@ -102,11 +101,10 @@ function pre_process_image(image::AbstractMatrix{T}, basis_file, options) where 
     haskey(options, :l) && validate_angular_orders(options[:l])
 
     folded_projection = fold_quadrants(image, center...; quadrant_filter=quadrant_filter)
-    basis_path = isnothing(basis_file) ? mkpath(joinpath(dirname(@__DIR__), "data")) : basis_file
     detector_coordinates = if haskey(options, :x)
         collect(Int, options[:x])
-    elseif isfile(basis_path)
-        basis_grid(basis_path)
+    elseif isfile(basis_file)
+        basis_grid(basis_file)
     else
         collect(0:511)
     end
@@ -128,7 +126,7 @@ function pre_process_image(image::AbstractMatrix{T}, basis_file, options) where 
     basis_options = Dict{Symbol,Any}(key => options[key] for key in basis_keys if haskey(options, key))
     basis_options[:x] = detector_coordinates
     basis_options[:weights] = fit_weights
-    return (; fit_pixels, basis_path, basis_options, make_images, regularization, energy_scale, center)
+    return (; fit_pixels, basis_options, make_images, regularization, energy_scale, center)
 end
 
 end # module Inversion

@@ -18,11 +18,11 @@ using .MathUtils
 using .ImageProcessing: fold_quadrants, unfold_quadrant, resize_folded_quadrant
 using .BasisFunctions: build_forward_basis
 using .InverseBasisFunctions: build_central_slice_basis
-using .PBASEXTypes: PBASEXResult, BASISData, generate_hashed_filename
+using .PBASEXTypes: PBASEXResult, BASISData
 using .Inversion: pbasex
 
 export pbasex, PBASEXResult, BASISData
-export build_forward_basis, build_central_slice_basis, generate_hashed_filename
+export build_forward_basis, build_central_slice_basis
 export fold_quadrants, unfold_quadrant, resize_folded_quadrant, leg, greet
 
 """
