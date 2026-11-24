@@ -89,7 +89,7 @@ elementwise difference divided by the norm of the reference output.
 MATLAB CPBASEX uses trapezoidal integration for the forward basis, while
 Julia uses adaptive Gauss–Kronrod integration. Independently generated
 Gaussian bases can therefore differ even when the input parameters agree.
-Julia's weighted-cache behavior is covered by package tests.
+Julia's weighted basis file behavior is covered by package tests.
 [Bundled-image validation in PR #2](https://github.com/jakiesumrain/PBASEX-Julia/pull/2)
 
 ### Circularized image with aligned polarization

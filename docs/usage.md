@@ -8,7 +8,8 @@ columns follow the detector image. One `pbasex` call processes one image.
 using PBASEX, DelimitedFiles
 
 image = readdlm("examples/image.txt", Float64)
-result = pbasex(image; center=(512, 512), make_images=false)
+basis_path = joinpath(mkpath("data"), "gaussian_r512_k128_l4.h5")
+result = pbasex(image; basis=basis_path, center=(512, 512), make_images=false)
 ```
 
 Set `make_images=true` to include the fitted detector projection and the
@@ -36,7 +37,7 @@ transform its measured center using the original image width.
 column, row = 477, 474
 aligned_image = rotl90(image)
 aligned_center = (row, size(image, 2) + 1 - column)
-result = pbasex(aligned_image; center=aligned_center, make_images=false)
+result = pbasex(aligned_image; basis=basis_path, center=aligned_center, make_images=false)
 ```
 
 For a 1024 × 1024 image, this gives `(474, 548)` in one-based

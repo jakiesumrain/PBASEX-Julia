@@ -121,44 +121,28 @@ using Test
         @test_throws AssertionError resize_folded_quadrant(ones(2, 2), 0)
     end
 
-    @testset "basis cache filenames" begin
-        x = collect(0:7)
-        k = [1.5, 5.5]
-        l = [0, 2]
-
-        name = generate_hashed_filename(x, k, l)
-        @test startswith(name, "BASISData_")
-        @test endswith(name, ".h5")
-        @test length(name) == length("BASISData_") + 64 + length(".h5")  # SHA-256
-
-        # Deterministic for identical input.
-        @test name == generate_hashed_filename(x, k, l)
-
-        # Sensitive to the grid, radial centers, and angular orders.
-        @test name != generate_hashed_filename(x, k, [0, 2, 4])
-        @test name != generate_hashed_filename(x, [1.5, 6.5], l)
-        @test name != generate_hashed_filename(collect(0:8), k, l)
-
-        # Prefix and suffix are honoured.
-        @test startswith(generate_hashed_filename(x, k, l; prefix = "b_"), "b_")
-        @test endswith(generate_hashed_filename(x, k, l; suffix = ".dat"), ".dat")
-    end
-
     @testset "argument validation" begin
-        # These all fail before any basis is computed or cached.
-        @test_throws AssertionError pbasex(rand(4, 3))                       # not square
-        @test_throws AssertionError pbasex(rand(4, 4); reg = -1.0)
-        @test_throws AssertionError pbasex(rand(4, 4); quadrant_filter = [1, 1])
-        @test_throws AssertionError pbasex(rand(4, 4); quadrant_filter = [1, 0, 0, 2])
-        @test_throws AssertionError pbasex(rand(4, 4); alpha = 0.0)
-        @test_throws AssertionError pbasex(rand(4, 4); center = (0, 2))
-        @test_throws AssertionError pbasex(rand(4, 4); weights = ones(4, 3))
-        @test_throws ArgumentError pbasex(ones(5, 5); l=[2, 4])
-        @test_throws ArgumentError pbasex(ones(5, 5); l=[0, 1])
-        @test_throws ArgumentError pbasex(ones(5, 5); l=[0, 0])
+        @test_throws UndefKeywordError pbasex(ones(5, 5))
+        mktempdir() do dir
+            basis = joinpath(dir, "unused.h5")
+            @test_throws ArgumentError pbasex(ones(5, 5); basis=dir)
+            @test_throws ArgumentError BASISData(dir)
+            @test_throws ArgumentError BASISData(joinpath(dir, "missing", "basis.h5"))
+            @test_throws AssertionError pbasex(rand(4, 3); basis)
+            @test_throws AssertionError pbasex(rand(4, 4); basis, reg=-1.0)
+            @test_throws AssertionError pbasex(rand(4, 4); basis, quadrant_filter=[1, 1])
+            @test_throws AssertionError pbasex(rand(4, 4); basis, quadrant_filter=[1, 0, 0, 2])
+            @test_throws AssertionError pbasex(rand(4, 4); basis, alpha=0.0)
+            @test_throws AssertionError pbasex(rand(4, 4); basis, center=(0, 2))
+            @test_throws AssertionError pbasex(rand(4, 4); basis, weights=ones(4, 3))
+            @test_throws ArgumentError pbasex(ones(5, 5); basis, l=[2, 4])
+            @test_throws ArgumentError pbasex(ones(5, 5); basis, l=[0, 1])
+            @test_throws ArgumentError pbasex(ones(5, 5); basis, l=[0, 0])
+            @test isempty(readdir(dir))
+        end
     end
 
-    @testset "package inversion and cache round trip" begin
+    @testset "package inversion and basis file round trip" begin
         mktempdir() do dir
             x = collect(0:7)
             k = [1.5, 5.5]
@@ -209,28 +193,43 @@ using Test
         end
     end
 
-    @testset "cache identity and lazy slice" begin
+    @testset "explicit basis files and lazy slice" begin
         mktempdir() do dir
             x, l = 0:7, [0, 2]
-            first_basis = BASISData(dir; x, l, params=[1.4], make_images=false)
+            basis = joinpath(dir, "gaussian-width-1p4.h5")
+            in_memory = BASISData(; x, l, params=[1.4], make_images=false)
+            @test isempty(readdir(dir))
+            first_basis = BASISData(basis; x, l, params=[1.4], make_images=false)
             @test first_basis.Ginv === nothing
-            @test !h5open(f -> haskey(f, "Ginv"), only(readdir(dir; join=true)), "r")
-            other_width = BASISData(dir; x, l, params=[3.0], make_images=false)
+            @test first_basis.S == in_memory.S
+            @test readdir(dir) == [basename(basis)]
+            @test !h5open(f -> haskey(f, "Ginv"), basis, "r")
+
+            @test_throws ArgumentError BASISData(basis; params=[3.0], make_images=false)
+            other_width = BASISData(joinpath(dir, "gaussian-width-3.h5");
+                                    x, l, params=[3.0], make_images=false)
             @test other_width.frk != first_basis.frk
-            weighted = BASISData(dir; x, l, params=[1.4], weights=fill(2.0, 8, 8), make_images=false)
+            weighted = BASISData(joinpath(dir, "gaussian-weighted.h5");
+                                 x, l, params=[1.4], weights=fill(2.0, 8, 8), make_images=false)
             @test weighted.S ≈ 2 .* first_basis.S
-            @test length(readdir(dir)) == 3
-            complete = BASISData(dir; x, l, params=[1.4])
+
+            complete = BASISData(basis)
             @test complete.S == first_basis.S
             @test size(complete.Ginv) == (64, 4)
+            @test !h5open(f -> haskey(f, "Ginv"), basis, "r")
 
             radial = (r, k, p) -> exp(-abs(r - k) / p[1])
-            BASISData(dir; x, l, rBF=radial, make_images=false)
-            @test length(readdir(dir)) == 3
-            a = BASISData(dir; x, l, rBF=radial, cache_key="exponential-v1", make_images=false)
-            b = BASISData(dir; x, l, rBF=radial, cache_key="exponential-v1", make_images=false)
-            @test a.S == b.S
-            @test length(readdir(dir)) == 4
+            custom_path = joinpath(dir, "custom.h5")
+            custom = BASISData(custom_path; x, l, rBF=radial, make_images=false)
+            @test BASISData(custom_path; make_images=false).S == custom.S
+            @test_throws ArgumentError BASISData(custom_path; rBF=radial)
+
+            tagged_path = joinpath(dir, "custom-tagged.h5")
+            tagged = BASISData(tagged_path; x, l, rBF=radial, cache_key="exponential-v1", make_images=false)
+            reopened = BASISData(tagged_path; rBF=radial, cache_key="exponential-v1")
+            @test reopened.S == tagged.S
+            @test size(reopened.Ginv) == (64, 4)
+            @test_throws ArgumentError BASISData(tagged_path; rBF=radial, cache_key="exponential-v2")
 
             image = ones(15, 15)
             path = joinpath(dir, "weighted.h5")
@@ -283,25 +282,25 @@ using Test
         @test_throws ArgumentError BASISData{Float64}(; x, radial_basis=family, params=[0])
 
         mktempdir() do dir
-            BASISData(dir; x, k, l, params, make_images=false)
-            cached = BASISData(dir; x, k, l, params, radial_basis=family, make_images=false)
-            @test length(readdir(dir)) == 2
+            BASISData(joinpath(dir, "gaussian.h5"); x, k, l, params, make_images=false)
+            spline_path = joinpath(dir, "spline.h5")
+            cached = BASISData(spline_path; x, k, l, params, radial_basis=family, make_images=false)
+            @test sort(readdir(dir)) == ["gaussian.h5", "spline.h5"]
             @test cached.Ginv === nothing
             @test cached.frk == spline.frk
-            restored = BASISData(dir; x, k, l, params, radial_basis=family)
+            restored = BASISData(spline_path; x, k, l, params, radial_basis=family)
             @test restored.S == cached.S
             @test restored.Ginv == spline.Ginv
 
             c = [2.0 0.5; 1.0 -0.2]
             projection = spline.U * (spline.S .* (spline.V' * vec(c)))
             image = unfold_quadrant(reshape(projection, length(x), length(x)))
-            path = joinpath(dir, "spline.h5")
-            result = pbasex(image; basis=path, x, k, l, params, radial_basis=family,
+            result = pbasex(image; basis=spline_path, x, k, l, params, radial_basis=family,
                             make_images=false)
             @test result.coefficients ≈ c
-            @test pbasex(image; basis=path).inverted_image ≈
+            @test pbasex(image; basis=spline_path).inverted_image ≈
                   unfold_quadrant(reshape(spline.Ginv * vec(c), length(x), length(x)))
-            @test_throws ArgumentError pbasex(image; basis=path, radial_basis=:gaussian)
+            @test_throws ArgumentError pbasex(image; basis=spline_path, radial_basis=:gaussian)
         end
     end
 

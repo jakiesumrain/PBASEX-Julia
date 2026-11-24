@@ -1,4 +1,4 @@
-# Build and cache a basis
+# Build and save a basis
 
 A basis combines radial profiles with Legendre polynomials. The forward
 matrix projects each basis function onto the detector. The solver stores
@@ -9,14 +9,14 @@ evaluate the radial profiles and central slice.
 
 | `basis` argument to `pbasex` | Behavior |
 | --- | --- |
-| `nothing` | Use the package's `data/` directory. |
-| Existing directory | Reuse or create a file keyed by the radial family, grid, basis parameters, and processed weights. Custom functions also require a stable `cache_key` for reuse. |
 | Existing HDF5 file | Read the grid and factors from that file. Explicitly supplied settings must agree with the file's metadata. Julia and MATLAB CPBASEX layouts are supported. |
 | New HDF5 path | Compute and save the basis at that path. The parent directory must exist. |
 
-Precompute a basis once and use its path across images. The ordinary
-`BASISData(path)` constructor uses `Float64`. Use `BASISData{Float32}` for
-single-precision storage.
+Pass a filename to `pbasex` and reuse its path across images. Previously
+generated basis files can be opened by their existing filenames. Use
+`BASISData(path)` to load or save a named basis, or `BASISData(; x, k, l)`
+to compute one in memory. Both default to `Float64`. Use
+`BASISData{Float32}` for single precision.
 
 The `radial_basis` keyword selects a family when building a basis. For a
 saved Julia spline basis, pass its path to reuse the recorded family.
@@ -49,7 +49,7 @@ originally built with weights.
 | `params` | Depends on the family | First value is the Gaussian width or the B-spline knot spacing, in pixels. |
 | `rBF` | Selected family | Custom radial function with signature `rBF(r, k, params)`. |
 | `zIP` | Selected family | Custom upper limit with signature `zIP(R, k, params)`, where `R` is the projected radius. |
-| `cache_key` | `nothing` | String identifying a custom radial function and integration limit. Change it when either function's behavior changes. |
+| `cache_key` | `nothing` | Optional identity for custom functions recorded in the file. Change it when either function's behavior changes. |
 
 The Gaussian is `exp(-(r - k)^2 / (2 * sigma^2))`, where `sigma = params[1]`.
 Its default width is `0.7 * length(x) / length(k)`, and its default
@@ -65,7 +65,8 @@ supply `rBF` and `zIP`.
 using PBASEX, DelimitedFiles
 
 image = readdlm("examples/image.txt", Float64)
-result = pbasex(image; radial_basis=:cubic_bspline, make_images=false)
+basis_path = joinpath(mkpath("data"), "cubic_bspline_r512_k128_l4.h5")
+result = pbasex(image; basis=basis_path, radial_basis=:cubic_bspline, make_images=false)
 ```
 
 The basis at radial center `k` is a centered cardinal cubic B-spline
@@ -115,17 +116,15 @@ using PBASEX
 radial(r, k, p) = p[1]^2 / ((r - k)^2 + p[1]^2)
 limit(R, k, p) = sqrt(max(0.0, (k + 10 * p[1])^2 - R^2))
 
-cache = mkpath("data/custom-bases")
-custom_basis = BASISData(cache; x=0:15, l=[0, 2], params=[2.0],
+basis_path = joinpath(mkpath("data/custom-bases"), "lorentzian-width-2.h5")
+custom_basis = BASISData(basis_path; x=0:15, l=[0, 2], params=[2.0],
                          rBF=radial, zIP=limit, cache_key="lorentzian-v1")
 ```
 
-A custom basis without a key is computed in memory when you pass a directory.
-An explicit file can still store the computed matrices. Reopen that file
-by path alone to use the saved matrices, or supply the original custom
-functions together with their matching `cache_key`. The HDF5 file stores
-numeric parameters and metadata. Keep the Julia definitions of custom
-functions with your analysis.
+Reopen a custom basis by path alone to use the saved matrices. To pass
+the original functions again, supply the same `cache_key` you used when
+creating the file. The HDF5 file stores numeric parameters and metadata.
+Keep the Julia definitions of custom functions with your analysis.
 
 ## Manage time and memory
 
@@ -146,12 +145,12 @@ leaves the file as it was.
 ## HDF5 layout
 
 For a basis with `nx = length(x)`, `nk = length(k)`, `nl = length(l)`, and
-`q = length(S)`, Julia's native cache stores these datasets.
+`q = length(S)`, Julia's native basis file stores these datasets.
 
 | Dataset | Meaning and shape |
 | --- | --- |
 | `x`, `k`, `l` | Grid, radial centers, and Legendre orders. |
-| `radial_basis` | Family identifier for a native cubic B-spline cache. |
+| `radial_basis` | Built-in family identifier. Older files may omit it for Gaussian bases. |
 | `params` | Numeric basis parameters. |
 | `weights` | Optional processed weight matrix of size `nx × nx`. |
 | `U`, `S`, `V` | SVD of the projected basis. Sizes are `nx² × q`, `q`, and `(nk * nl) × q`. |
@@ -172,4 +171,3 @@ for the CPBASEX export layout.
 | `resize_folded_quadrant(quadrant, nx)` | Crop or zero-pad the folded quadrant to the basis dimensions. |
 | `unfold_quadrant(quadrant; center_offset=true, quadrant_count=4)` | Mirror a folded image and divide by the number of quadrants summed. |
 | `leg(l, x)` | Evaluate Legendre polynomial `l` at a scalar or array of arguments. |
-| `generate_hashed_filename(x, k, l)` | Generate a hash from the three vectors. Automatic basis caches use additional metadata in their keys. |
