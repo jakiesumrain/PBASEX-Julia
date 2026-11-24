@@ -1,6 +1,6 @@
 # PBASEX-Julia
 
-`pBASEX` uses polar basis set expansion to invert velocity-map imaging (VMI)
+`PBASEX` uses polar basis set expansion to invert velocity-map imaging (VMI)
 projections. It fits a square detector image and returns the energy spectrum,
 angular anisotropy coefficients, and optionally the reconstructed projection
 and Abel-inverted central slice.
@@ -21,7 +21,7 @@ At the Julia prompt, extract the spectrum from the bundled image and write
 two columns to a text file.
 
 ```julia
-using pBASEX, DelimitedFiles
+using PBASEX, DelimitedFiles
 
 image = readdlm("examples/image.txt", Float64)
 result = pbasex(image; make_images=false)
@@ -37,9 +37,14 @@ axis before fitting. The Gaussian basis is the default. Select
 `radial_basis=:cubic_bspline` when building a compact spline basis.
 [Image alignment](docs/usage.md#align-the-polarization-axis) · [Spline basis](docs/bases.md#use-a-compact-cubic-b-spline)
 
-To run the bundled example with image reconstruction and HDF5 output, use
-`julia --project=. --threads=auto examples/sample_pbasex.jl` from the checkout.
-It uses `basis.h5` and writes `out.h5` in the working directory.
+Run the bundled image reconstruction example from the repository root.
+The first script prepares `basis.h5`, and the second uses it to invert the
+bundled detector image and write `out.h5`.
+
+```sh
+julia --project=. --threads=auto examples/generate_basis.jl
+julia --project=. --threads=auto examples/invert_detector_image.jl
+```
 
 ## Documentation
 

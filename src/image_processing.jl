@@ -1,77 +1,78 @@
 module ImageProcessing
 
-export foldQuadrant, unfoldQuadrant, resizeFolded
+export fold_quadrants, unfold_quadrant, resize_folded_quadrant
 
 """
-    foldQuadrant(M, x0, y0; quadrant_filter=[1, 1, 1, 1])
+    fold_quadrants(detector_image, center_column, center_row; quadrant_filter=[1, 1, 1, 1])
 
 Sum selected quadrants of a detector image or stack around the one-based
-center `(x0, y0)` in (column, row) order. The filter follows MATLAB CPBASEX
+center `(center_column, center_row)` in (column, row) order. The filter follows MATLAB CPBASEX
 order: top-right, top-left, bottom-left, bottom-right. Each selected
 quadrant includes the center row and column. The result starts at the
 center and extends as far as the smallest selected quadrant in each direction.
 """
-function foldQuadrant(M::AbstractArray{T,N}, x0::Int, y0::Int;
-                      quadrant_filter::Vector{Int}=[1, 1, 1, 1]) where {T,N}
+function fold_quadrants(detector_image::AbstractArray{T,N}, center_column::Int, center_row::Int;
+                        quadrant_filter::Vector{Int}=[1, 1, 1, 1]) where {T,N}
     @assert N in (2, 3) "Input must be a 2D or 3D array"
     @assert length(quadrant_filter) == 4 "quadrant_filter must have exactly 4 elements"
     @assert all(in((0, 1)), quadrant_filter) "quadrant_filter must contain only 0s or 1s"
-    selected = findall(==(1), quadrant_filter)
-    @assert !isempty(selected) "quadrant_filter must select at least one quadrant"
+    selected_quadrants = findall(==(1), quadrant_filter)
+    @assert !isempty(selected_quadrants) "quadrant_filter must select at least one quadrant"
 
-    rows, cols = size(M, 1), size(M, 2)
-    @assert 1 <= x0 <= cols "Center x0=$x0 is outside the image columns"
-    @assert 1 <= y0 <= rows "Center y0=$y0 is outside the image rows"
+    image_rows, image_columns = size(detector_image, 1), size(detector_image, 2)
+    @assert 1 <= center_column <= image_columns "Center x0=$center_column is outside the image columns"
+    @assert 1 <= center_row <= image_rows "Center y0=$center_row is outside the image rows"
 
-    directions = ((-1, 1), (-1, -1), (1, -1), (1, 1))
-    lx = minimum(i -> directions[i][2] > 0 ? cols - x0 : x0 - 1, selected)
-    ly = minimum(i -> directions[i][1] > 0 ? rows - y0 : y0 - 1, selected)
-    trailing = N == 3 ? (Colon(),) : ()
-    out = zeros(T, (ly + 1, lx + 1, size(M)[3:end]...))
-    for i in selected
-        dy, dx = directions[i]
-        ys = range(y0; step=dy, length=ly + 1)
-        xs = range(x0; step=dx, length=lx + 1)
-        out .+= view(M, ys, xs, trailing...)
+    # Steps are ordered as (row, column) to match array indexing.
+    quadrant_directions = ((-1, 1), (-1, -1), (1, -1), (1, 1))
+    column_extent = minimum(quadrant -> quadrant_directions[quadrant][2] > 0 ? image_columns - center_column : center_column - 1, selected_quadrants)
+    row_extent = minimum(quadrant -> quadrant_directions[quadrant][1] > 0 ? image_rows - center_row : center_row - 1, selected_quadrants)
+    frame_indices = N == 3 ? (Colon(),) : ()
+    folded_projection = zeros(T, (row_extent + 1, column_extent + 1, size(detector_image)[3:end]...))
+    for quadrant in selected_quadrants
+        row_step, column_step = quadrant_directions[quadrant]
+        row_indices = range(center_row; step=row_step, length=row_extent + 1)
+        column_indices = range(center_column; step=column_step, length=column_extent + 1)
+        folded_projection .+= view(detector_image, row_indices, column_indices, frame_indices...)
     end
-    return out
+    return folded_projection
 end
 
 """
-    unfoldQuadrant(M; center_offset=true, quadrant_count=4)
+    unfold_quadrant(folded_projection; center_offset=true, quadrant_count=4)
 
 Mirror a quadrant or stack in both directions and divide by the number of
-quadrants summed in `M`. With `center_offset=true`, the first row and column
+quadrants summed in `folded_projection`. With `center_offset=true`, the first row and column
 become the center of an odd-sized output. Set it to `false` to duplicate them.
 """
-function unfoldQuadrant(M::AbstractArray{T,N}; center_offset::Bool=true,
-                        quadrant_count::Int=4) where {T,N}
+function unfold_quadrant(folded_projection::AbstractArray{T,N}; center_offset::Bool=true,
+                         quadrant_count::Int=4) where {T,N}
     @assert N in (2, 3) "Input must be a 2D or 3D array"
     @assert 1 <= quadrant_count <= 4 "quadrant_count must be between 1 and 4"
-    first_mirrored = 1 + Int(center_offset)
-    rows, cols = size(M, 1), size(M, 2)
-    @assert rows >= first_mirrored && cols >= first_mirrored "Input quadrant is too small for center_offset=$center_offset"
-    ys = [rows:-1:first_mirrored; 1:rows]
-    xs = [cols:-1:first_mirrored; 1:cols]
-    trailing = N == 3 ? (Colon(),) : ()
-    return M[ys, xs, trailing...] ./ quadrant_count
+    first_reflected_index = 1 + Int(center_offset)
+    folded_rows, folded_columns = size(folded_projection, 1), size(folded_projection, 2)
+    @assert folded_rows >= first_reflected_index && folded_columns >= first_reflected_index "Input quadrant is too small for center_offset=$center_offset"
+    row_indices = [folded_rows:-1:first_reflected_index; 1:folded_rows]
+    column_indices = [folded_columns:-1:first_reflected_index; 1:folded_columns]
+    frame_indices = N == 3 ? (Colon(),) : ()
+    return folded_projection[row_indices, column_indices, frame_indices...] ./ quadrant_count
 end
 
 """
-    resizeFolded(data, rmax)
+    resize_folded_quadrant(folded_projection, detector_side)
 
-Resize a folded quadrant or stack to `rmax × rmax` by cropping or
+Resize a folded quadrant or stack to `detector_side × detector_side` by cropping or
 zero-padding each spatial dimension. The center stays at index `[1, 1]`.
 """
-function resizeFolded(data::AbstractArray{T,N}, rmax::Int) where {T,N}
+function resize_folded_quadrant(folded_projection::AbstractArray{T,N}, detector_side::Int) where {T,N}
     @assert N in (2, 3) "Input must be a 2D or 3D array"
-    @assert rmax > 0 "Target size rmax must be positive"
-    rows = 1:min(size(data, 1), rmax)
-    cols = 1:min(size(data, 2), rmax)
-    trailing = N == 3 ? (Colon(),) : ()
-    out = zeros(T, (rmax, rmax, size(data)[3:end]...))
-    out[rows, cols, trailing...] .= view(data, rows, cols, trailing...)
-    return out
+    @assert detector_side > 0 "Target size rmax must be positive"
+    row_indices = 1:min(size(folded_projection, 1), detector_side)
+    column_indices = 1:min(size(folded_projection, 2), detector_side)
+    frame_indices = N == 3 ? (Colon(),) : ()
+    resized_projection = zeros(T, (detector_side, detector_side, size(folded_projection)[3:end]...))
+    resized_projection[row_indices, column_indices, frame_indices...] .= view(folded_projection, row_indices, column_indices, frame_indices...)
+    return resized_projection
 end
 
 end # module ImageProcessing

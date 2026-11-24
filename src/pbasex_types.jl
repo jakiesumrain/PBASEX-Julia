@@ -4,8 +4,8 @@ using HDF5
 using Serialization
 using SHA
 
-using ..BasisFunctions: findG, cubic_bspline, cubic_bspline_limit
-using ..InverseBasisFunctions: findGinv
+using ..BasisFunctions: build_forward_basis, cubic_bspline, cubic_bspline_limit
+using ..InverseBasisFunctions: build_central_slice_basis
 using ..MathUtils: meshgrid
 
 export PBASEXResult, BASISData, generate_hashed_filename
@@ -13,10 +13,12 @@ export PBASEXResult, BASISData, generate_hashed_filename
 """
     PBASEXResult{T}
 
-Results for one image. E and IE are the energy scale and one-dimensional
-intensity spectrum. Each column of betas corresponds to a nonzero Legendre
-order in the basis. Coefficients have one row per radial center and one
-column per Legendre order. Image outputs and residuals are optional.
+Results for one VMI image. `E` contains energy values on the requested scale,
+and `IE` contains the one-dimensional energy spectrum. Columns of
+`betas` follow the nonzero Legendre orders in the basis. The coefficient
+matrix has one row per radial center and one column per Legendre order.
+`inverted_image` is the central velocity slice. `reconstructed_image` is
+the fitted detector projection. Image outputs and residuals are optional.
 """
 struct PBASEXResult{T<:AbstractFloat}
     E::Vector{T}
@@ -34,10 +36,12 @@ end
     BASISData(path; kwargs...)
 
 Compute a basis, cache it in a directory, or load it from an explicit file.
-The columns of U and V are the left and right singular vectors of the
-projected basis. The radial table frk has one row per radial center.
-Ginv maps coefficients to a central slice and is omitted if
-make_images=false. Existing MATLAB CPBASEX basis files are supported.
+The fields `x`, `k`, and `l` give the detector coordinates, radial basis
+centers, and Legendre orders. The columns of `U` and `V` are the left and
+right singular vectors of the forward operator. `S` holds the singular
+values. The radial table `frk` has one row per radial center and one column
+per sampled radius. `Ginv` maps coefficients to a central slice and is
+omitted if `make_images=false`. Existing MATLAB CPBASEX files are supported.
 
 Select `radial_basis=:cubic_bspline` for a compact cubic B-spline. Its first
 parameter is the knot spacing in pixels. The directory cache includes the
@@ -62,9 +66,10 @@ struct BASISData{T<:AbstractFloat}
     Ginv::Union{Matrix{T},Nothing}
 end
 
-gaussian(r, k, p) = exp(-(r - k)^2 / (2 * p[1]^2))
-function gaussian_limit(R, k::T, p) where T
-    return sqrt(max(zero(T), (sqrt(T(20)) * p[1] + k)^2 - R^2))
+gaussian(radius, radial_center, basis_parameters) = exp(-(radius - radial_center)^2 / (2 * basis_parameters[1]^2))
+function gaussian_limit(detector_radius, radial_center::T, basis_parameters) where T
+    # Keep the CPBASEX cutoff at exp(-10) of the Gaussian peak.
+    return sqrt(max(zero(T), (sqrt(T(20)) * basis_parameters[1] + radial_center)^2 - detector_radius^2))
 end
 
 function radial_functions(family)
@@ -78,77 +83,83 @@ function radial_family(data)
 end
 
 function basis_definition(::Type{T}, options) where T
-    x = collect(Int, get(options, :x, 0:511))
-    isempty(x) && throw(ArgumentError("x must contain at least one grid point"))
-    k = collect(T, get(options, :k, x[2:4:end] .+ 0.5))
-    isempty(k) && throw(ArgumentError("k must contain at least one radial center"))
-    l = collect(Int, get(options, :l, (0, 2, 4)))
-    !isempty(l) && all(>=(0), l) || throw(ArgumentError("l must contain nonnegative orders"))
-    family = get(options, :radial_basis, :gaussian)
-    default_rBF, default_zIP = radial_functions(family)
-    default_width = family === :gaussian ? 0.7 * length(x) / length(k) : length(x) / length(k)
-    params = collect(T, get(options, :params, [default_width]))
-    weights = get(options, :weights, nothing)
-    if !isnothing(weights)
-        size(weights) == (length(x), length(x)) ||
+    detector_coordinates = collect(Int, get(options, :x, 0:511))
+    isempty(detector_coordinates) && throw(ArgumentError("x must contain at least one grid point"))
+    radial_centers = collect(T, get(options, :k, detector_coordinates[2:4:end] .+ 0.5))
+    isempty(radial_centers) && throw(ArgumentError("k must contain at least one radial center"))
+    legendre_orders = collect(Int, get(options, :l, (0, 2, 4)))
+    !isempty(legendre_orders) && all(>=(0), legendre_orders) || throw(ArgumentError("l must contain nonnegative orders"))
+    basis_family = get(options, :radial_basis, :gaussian)
+    default_radial_profile, default_line_of_sight_limit = radial_functions(basis_family)
+    default_width = basis_family === :gaussian ?
+        0.7 * length(detector_coordinates) / length(radial_centers) :
+        length(detector_coordinates) / length(radial_centers)
+    basis_parameters = collect(T, get(options, :params, [default_width]))
+    pixel_weights = get(options, :weights, nothing)
+    if !isnothing(pixel_weights)
+        size(pixel_weights) == (length(detector_coordinates), length(detector_coordinates)) ||
             throw(ArgumentError("Basis weights must match the square grid"))
-        weights = Matrix{T}(weights)
+        pixel_weights = Matrix{T}(pixel_weights)
     end
-    rBF = get(options, :rBF, default_rBF)::Function
-    zIP = get(options, :zIP, default_zIP)::Function
-    if haskey(options, :radial_basis) && (rBF !== default_rBF || zIP !== default_zIP)
+    radial_profile = get(options, :rBF, default_radial_profile)::Function
+    line_of_sight_limit = get(options, :zIP, default_line_of_sight_limit)::Function
+    if haskey(options, :radial_basis) && (radial_profile !== default_radial_profile || line_of_sight_limit !== default_line_of_sight_limit)
         throw(ArgumentError("Choose a built-in radial_basis or supply custom rBF and zIP"))
     end
-    all(isfinite, k) && all(isfinite, params) || throw(ArgumentError("k and params must be finite"))
-    if rBF === gaussian || zIP === gaussian_limit
-        !isempty(params) && first(params) > 0 ||
+    all(isfinite, radial_centers) && all(isfinite, basis_parameters) || throw(ArgumentError("k and params must be finite"))
+    if radial_profile === gaussian || line_of_sight_limit === gaussian_limit
+        !isempty(basis_parameters) && first(basis_parameters) > 0 ||
             throw(ArgumentError("The Gaussian basis requires a positive width"))
-    elseif family === :cubic_bspline
-        !isempty(params) && first(params) > 0 ||
+    elseif basis_family === :cubic_bspline
+        !isempty(basis_parameters) && first(basis_parameters) > 0 ||
             throw(ArgumentError("The cubic B-spline requires a positive knot spacing"))
     end
-    return (; x, k, l, params, weights, rBF, zIP)
+    # Use the public keyword names so the definition can be passed to the constructor.
+    return (; x=detector_coordinates, k=radial_centers, l=legendre_orders,
+             params=basis_parameters, weights=pixel_weights, rBF=radial_profile, zIP=line_of_sight_limit)
 end
 
 function BASISData{T}(; make_images::Bool=true, kwargs...) where {T<:AbstractFloat}
-    d = basis_definition(T, kwargs)
+    definition = basis_definition(T, kwargs)
     if all(key -> haskey(kwargs, key), (:U, :S, :V))
         U, S, V = kwargs[:U], kwargs[:S], kwargs[:V]
     else
-        U, S, V = findG(d.x, d.k, d.l, d.rBF, d.zIP, d.params, d.weights)
+        U, S, V = build_forward_basis(definition.x, definition.k, definition.l, definition.rBF,
+                                      definition.zIP, definition.params, definition.weights)
     end
-    frk = get(kwargs, :frk) do
-        R, K = meshgrid(T.(d.x), d.k)
-        d.rBF.(R, K, Ref(d.params))
+    radial_table = get(kwargs, :frk) do
+        radius_grid, radial_center_grid = meshgrid(T.(definition.x), definition.k)
+        definition.rBF.(radius_grid, radial_center_grid, Ref(definition.params))
     end
-    Ginv = if make_images
+    slice_basis = if make_images
         get(kwargs, :Ginv) do
-            findGinv(d.x, d.k, d.l, d.rBF, d.params)
+            build_central_slice_basis(definition.x, definition.k, definition.l, definition.rBF, definition.params)
         end
     else
         nothing
     end
-    return BASISData{T}(d.x, d.k, d.l, d.weights, d.params, d.rBF, d.zIP,
-                        U, S, V, frk, Ginv)
+    return BASISData{T}(definition.x, definition.k, definition.l, definition.weights,
+                        definition.params, definition.rBF, definition.zIP, U, S, V,
+                        radial_table, slice_basis)
 end
 
 function BASISData{T}(path::AbstractString; make_images::Bool=true,
                       cache_key::Union{AbstractString,Nothing}=nothing, kwargs...) where {T<:AbstractFloat}
     options = (; kwargs...)
     if isdir(path)
-        d = basis_definition(T, options)
-        family = radial_family(d)
-        default_rBF, default_zIP = radial_functions(family)
-        custom = (d.rBF !== default_rBF, d.zIP !== default_zIP)
-        if any(custom) && isnothing(cache_key)
-            return BASISData{T}(; make_images, d...)
+        definition = basis_definition(T, options)
+        family = radial_family(definition)
+        default_radial_profile, default_line_of_sight_limit = radial_functions(family)
+        custom_functions = (definition.rBF !== default_radial_profile, definition.zIP !== default_line_of_sight_limit)
+        if any(custom_functions) && isnothing(cache_key)
+            return BASISData{T}(; make_images, definition...)
         end
-        identity = (d.params, d.weights, custom, isnothing(cache_key) ? nothing : String(cache_key))
+        basis_identity = (definition.params, definition.weights, custom_functions, isnothing(cache_key) ? nothing : String(cache_key))
         # Keep the existing names for Gaussian and custom caches.
         cache_version = family === :gaussian ? :pbasex_v2 : :pbasex_cubic_bspline_v1
-        filename = hashed_filename((cache_version, d.x, d.k, d.l, identity))
+        filename = hashed_filename((cache_version, definition.x, definition.k, definition.l, basis_identity))
         path = joinpath(path, filename)
-        options = merge(options, d)
+        options = merge(options, definition)
     end
     isfile(path) && return load_basis(T, path, make_images, cache_key, options)
     isdir(dirname(abspath(path))) || throw(ArgumentError("Parent directory of basis file does not exist: $path"))
@@ -171,23 +182,25 @@ function unavailable_basis_function(args...)
 end
 
 function load_basis(::Type{T}, path, make_images, cache_key, options) where T
-    return h5open(path, "r") do f
-        matlab = haskey(f, "Up") && !haskey(f, "U")
-        x = vec(Int.(read(f, "x")))
-        k = vec(T.(read(f, "k")))
-        l = vec(Int.(read(f, "l")))
-        weights = haskey(f, "weights") ? convert(Matrix{T}, read(f, "weights")) : nothing
-        has_params = haskey(f, "params")
-        params = has_params ? vec(T.(read(f, "params"))) : T[]
-        family = haskey(f, "radial_basis") ? Symbol(read(f, "radial_basis")) : :gaussian
-        default_rBF, default_zIP = radial_functions(family)
-        custom = haskey(f, "custom_functions") ? Tuple(Bool.(read(f, "custom_functions"))) : (!has_params, !has_params)
-        saved_key = haskey(f, "cache_key") ? read(f, "cache_key") : nothing
+    return h5open(path, "r") do basis_file
+        is_matlab_basis = haskey(basis_file, "Up") && !haskey(basis_file, "U")
+        detector_coordinates = vec(Int.(read(basis_file, "x")))
+        radial_centers = vec(T.(read(basis_file, "k")))
+        legendre_orders = vec(Int.(read(basis_file, "l")))
+        pixel_weights = haskey(basis_file, "weights") ? convert(Matrix{T}, read(basis_file, "weights")) : nothing
+        has_basis_parameters = haskey(basis_file, "params")
+        basis_parameters = has_basis_parameters ? vec(T.(read(basis_file, "params"))) : T[]
+        basis_family = haskey(basis_file, "radial_basis") ? Symbol(read(basis_file, "radial_basis")) : :gaussian
+        default_radial_profile, default_line_of_sight_limit = radial_functions(basis_family)
+        custom_functions = haskey(basis_file, "custom_functions") ?
+            Tuple(Bool.(read(basis_file, "custom_functions"))) :
+            (!has_basis_parameters, !has_basis_parameters)
+        saved_key = haskey(basis_file, "cache_key") ? read(basis_file, "cache_key") : nothing
 
-        if haskey(options, :radial_basis) && (options[:radial_basis] !== family || any(custom))
+        if haskey(options, :radial_basis) && (options[:radial_basis] !== basis_family || any(custom_functions))
             throw(ArgumentError("Requested radial_basis does not match the basis in $path"))
         end
-        for (name, value) in pairs((; x, k, l))
+        for (name, value) in pairs((; x=detector_coordinates, k=radial_centers, l=legendre_orders))
             if haskey(options, name) && !isequal(collect(eltype(value), options[name]), value)
                 throw(ArgumentError("Requested $name does not match the basis in $path"))
             end
@@ -195,56 +208,59 @@ function load_basis(::Type{T}, path, make_images, cache_key, options) where T
         if haskey(options, :weights)
             requested_weights = options[:weights]
             requested_weights = isnothing(requested_weights) ? nothing : Matrix{T}(requested_weights)
-            isequal(requested_weights, weights) ||
+            isequal(requested_weights, pixel_weights) ||
                 throw(ArgumentError("Requested weights do not match the basis in $path"))
         end
-        if haskey(options, :params) && (!has_params || !isequal(collect(T, options[:params]), params))
+        if haskey(options, :params) && (!has_basis_parameters || !isequal(collect(T, options[:params]), basis_parameters))
             throw(ArgumentError("Requested params could not be verified against the basis in $path"))
         end
         if !isnothing(cache_key) && cache_key != saved_key
             throw(ArgumentError("Requested cache_key does not match the basis in $path"))
         end
-        rBF = get(options, :rBF, custom[1] ? unavailable_basis_function : default_rBF)
-        zIP = get(options, :zIP, custom[2] ? unavailable_basis_function : default_zIP)
-        for (name, default, was_custom) in zip((:rBF, :zIP), (default_rBF, default_zIP), custom)
+        radial_profile = get(options, :rBF, custom_functions[1] ? unavailable_basis_function : default_radial_profile)
+        line_of_sight_limit = get(options, :zIP, custom_functions[2] ? unavailable_basis_function : default_line_of_sight_limit)
+        for (name, default, was_custom) in zip((:rBF, :zIP), (default_radial_profile, default_line_of_sight_limit), custom_functions)
             if haskey(options, name)
                 if (options[name] !== default) != was_custom || (was_custom && isnothing(cache_key))
                     throw(ArgumentError("Cannot verify $name against the basis in $path. Use its matching cache_key or load the saved functions' matrices by path."))
                 end
             end
         end
-        if !matlab && !has_params
+        if !is_matlab_basis && !has_basis_parameters
             @warn "Legacy Julia basis has no weight metadata. Loading it as unweighted." path
         end
 
-        # CPBASEX's loadG transposes Up, V and Ginv from the MATLAB file.
-        # The Julia solver stores U (rather than U') and uses frk[k, x].
-        U = convert(Matrix{T}, read(f, matlab ? "Up" : "U"))
-        S = vec(T.(read(f, "S")))
-        V = convert(Matrix{T}, read(f, "V"))
-        frk = convert(Matrix{T}, read(f, "frk"))
-        matlab && (V = permutedims(V))
-        pixels = length(x)^2
-        columns = length(k) * length(l)
-        rank_size = length(S)
-        size(U) == (pixels, rank_size) && size(V) == (columns, rank_size) &&
-            size(frk) == (length(k), length(x)) && 0 < rank_size <= min(pixels, columns) &&
-            (isnothing(weights) || size(weights) == (length(x), length(x))) ||
+        # In a MATLAB CPBASEX cache, Up already has the shape of Julia's U.
+        # The stored V and central-slice matrix need transposing.
+        U = convert(Matrix{T}, read(basis_file, is_matlab_basis ? "Up" : "U"))
+        S = vec(T.(read(basis_file, "S")))
+        V = convert(Matrix{T}, read(basis_file, "V"))
+        radial_table = convert(Matrix{T}, read(basis_file, "frk"))
+        is_matlab_basis && (V = permutedims(V))
+        pixel_count = length(detector_coordinates)^2
+        basis_count = length(radial_centers) * length(legendre_orders)
+        singular_value_count = length(S)
+        size(U) == (pixel_count, singular_value_count) && size(V) == (basis_count, singular_value_count) &&
+            size(radial_table) == (length(radial_centers), length(detector_coordinates)) && 0 < singular_value_count <= min(pixel_count, basis_count) &&
+            (isnothing(pixel_weights) || size(pixel_weights) == (length(detector_coordinates), length(detector_coordinates))) ||
             throw(ArgumentError("Basis dimensions are inconsistent in $path"))
-        Ginv = nothing
+        slice_basis = nothing
         if make_images
-            if haskey(f, "Ginv")
-                Ginv = convert(Matrix{T}, read(f, "Ginv"))
-                matlab && (Ginv = permutedims(Ginv))
+            if haskey(basis_file, "Ginv")
+                slice_basis = convert(Matrix{T}, read(basis_file, "Ginv"))
+                is_matlab_basis && (slice_basis = permutedims(slice_basis))
             else
-                rBF === unavailable_basis_function &&
+                radial_profile === unavailable_basis_function &&
                     throw(ArgumentError("The basis in $path has no central-slice matrix or radial function"))
-                Ginv = findGinv(x, k, l, rBF, params)
+                slice_basis = build_central_slice_basis(detector_coordinates, radial_centers,
+                                                        legendre_orders, radial_profile, basis_parameters)
             end
-            size(Ginv) == (pixels, columns) ||
+            size(slice_basis) == (pixel_count, basis_count) ||
                 throw(ArgumentError("Central-slice matrix has inconsistent dimensions in $path"))
         end
-        return BASISData{T}(x, k, l, weights, params, rBF, zIP, U, S, V, frk, Ginv)
+        return BASISData{T}(detector_coordinates, radial_centers, legendre_orders, pixel_weights,
+                            basis_parameters, radial_profile, line_of_sight_limit, U, S, V,
+                            radial_table, slice_basis)
     end
 end
 
