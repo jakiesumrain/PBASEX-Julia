@@ -8,13 +8,13 @@ module InverseBasisFunctions
 using LinearAlgebra
 using ProgressMeter
 
-using ..MathUtils: meshgrid, leg
+using ..MathUtils: meshgrid, leg, axial_coordinates
 
 export build_central_slice_basis
 
 """
     build_central_slice_basis(detector_coordinates, radial_centers, legendre_orders,
-                              radial_profile, basis_parameters)
+                              radial_profile, basis_parameters; geometry=:quadrant)
 
 Build `Ginv`, the matrix that evaluates the fitted distribution in the central
 plane at line-of-sight coordinate zero. Each entry is the radial profile times
@@ -26,6 +26,7 @@ plane at line-of-sight coordinate zero. Each entry is the radial profile times
 - `legendre_orders` gives the angular basis orders.
 - `radial_profile(radius, radial_center, basis_parameters)` evaluates a radial basis function.
 - `basis_parameters` holds the radial shape parameters.
+- `geometry=:half_plane` samples both axial hemispheres and includes the physical normalization `1/(4π)`.
 
 # Returns
 A matrix with one row per slice pixel and one column per basis function.
@@ -34,20 +35,21 @@ Multiply `Ginv` by the fitted coefficient vector to recover the slice.
 """
 function build_central_slice_basis(detector_coordinates::AbstractVector, radial_centers::AbstractVector{T},
                                    legendre_orders::AbstractVector{Int}, radial_profile::Function,
-                                   basis_parameters::AbstractVector{T}) where T<:AbstractFloat
+                                   basis_parameters::AbstractVector{T}; geometry=:quadrant) where T<:AbstractFloat
     # Flatten in column order so the radial center varies fastest.
     basis_order_grid, basis_center_grid = meshgrid(legendre_orders, radial_centers)
     basis_orders = vec(basis_order_grid)
     basis_centers = vec(basis_center_grid)
 
     detector_side = length(detector_coordinates)
+    signed_axis = axial_coordinates(detector_coordinates, geometry)
     radial_count = length(radial_centers)
     angular_count = length(legendre_orders)
-    pixel_count = detector_side^2
+    pixel_count = length(signed_axis) * detector_side
     basis_count = radial_count * angular_count
     @assert length(basis_orders) == basis_count "Meshgrid size mismatch for basis functions"
 
-    slice_x_grid, slice_y_grid = meshgrid(T.(detector_coordinates), T.(detector_coordinates))
+    slice_x_grid, slice_y_grid = meshgrid(T.(detector_coordinates), T.(signed_axis))
     slice_x = vec(slice_x_grid)
     slice_y = vec(slice_y_grid)
     slice_radii = @. sqrt(slice_x^2 + slice_y^2)
@@ -68,6 +70,7 @@ function build_central_slice_basis(detector_coordinates::AbstractVector, radial_
 
     # Match MATLAB's zero anisotropic slice terms at the undefined origin.
     replace!(slice_basis, T(NaN) => zero(T))
+    geometry === :half_plane && (slice_basis ./= 4 * T(π))
     return slice_basis
 end
 

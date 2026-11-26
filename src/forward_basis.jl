@@ -11,7 +11,7 @@ using LinearAlgebra
 using QuadGK
 using ProgressMeter
 
-using ..MathUtils: meshgrid, leg
+using ..MathUtils: meshgrid, leg, axial_coordinates
 
 export build_forward_basis
 
@@ -74,7 +74,8 @@ end
 
 """
     build_forward_basis(detector_coordinates, radial_centers, legendre_orders,
-                        radial_profile, line_of_sight_limit, basis_parameters, weights)
+                        radial_profile, line_of_sight_limit, basis_parameters, weights;
+                        geometry=:quadrant)
 
 Build the forward operator `G` mapping basis coefficients to a folded detector
 projection. Each entry integrates a radial profile times `Pₗ(cos θ)` along
@@ -89,6 +90,7 @@ The built-in cubic B-spline splits the integral at its projected knots.
 - `line_of_sight_limit(detector_radius, radial_center, basis_parameters)` supplies the upper integration limit.
 - `basis_parameters` holds radial shape parameters, such as Gaussian width or spline knot spacing.
 - `weights` is a matrix on the folded detector grid or `nothing`.
+- `geometry=:half_plane` samples signed axial coordinates, with positive values first.
 
 # Returns
 The thin SVD `(U, S, V)` of `G`, with `G = U * Diagonal(S) * V'`. Rows of
@@ -98,14 +100,16 @@ among its columns.
 function build_forward_basis(detector_coordinates::AbstractVector, radial_centers::AbstractVector{T},
                              legendre_orders::AbstractVector{Int}, radial_profile::F,
                              line_of_sight_limit::Z, basis_parameters::AbstractVector{T},
-                             weights::Union{AbstractMatrix{T},Nothing}) where {T<:AbstractFloat,F<:Function,Z<:Function}
+                             weights::Union{AbstractMatrix{T},Nothing};
+                             geometry=:quadrant) where {T<:AbstractFloat,F<:Function,Z<:Function}
     detector_side = length(detector_coordinates)
+    signed_axis = axial_coordinates(detector_coordinates, geometry)
     radial_count = length(radial_centers)
     angular_count = length(legendre_orders)
-    pixel_count = detector_side^2
+    pixel_count = length(signed_axis) * detector_side
     basis_count = radial_count * angular_count
 
-    detector_x_grid, detector_y_grid = meshgrid(T.(detector_coordinates), T.(detector_coordinates))
+    detector_x_grid, detector_y_grid = meshgrid(T.(detector_coordinates), T.(signed_axis))
     detector_x = vec(detector_x_grid)
     detector_y = vec(detector_y_grid)
     detector_radii = @. sqrt(detector_x^2 + detector_y^2)
@@ -134,7 +138,7 @@ function build_forward_basis(detector_coordinates::AbstractVector, radial_center
 
     # In this layout, a detector weight scales a column rather than a row.
     if !isnothing(weights)
-        @assert size(weights) == (detector_side, detector_side) "Weights matrix must have size ($detector_side, $detector_side)"
+        @assert size(weights) == (length(signed_axis), detector_side) "Weights must match the detector grid"
         forward_transpose .*= vec(weights)'
     end
 

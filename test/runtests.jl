@@ -256,6 +256,82 @@ using Test
         end
     end
 
+    @testset "Axial symmetry with odd Legendre orders" begin
+        geometry = :half_plane
+        x, k, l = 0:5, [0.0, 1.0, 2.0], [0, 1, 2]
+        side = length(x)
+        center = (side, side)
+        width, asymmetry, amplitude = 2.0, 0.35, 1.7
+        params = [width]
+        # For this analytic example, the radial basis indices encode powers of r/s.
+        radial(r, power, parameters) = (r / parameters[1])^Int(power) * exp(-r^2 / (2 * parameters[1]^2))
+        limit(R, power, parameters) = sqrt(max(0.0, (14 * parameters[1])^2 - R^2))
+        slice = [amplitude * exp(-(y^2 + z^2) / (2 * width^2)) * (1 + asymmetry * z / width)^2
+                 for z in last(x):-1:-last(x), y in -last(x):last(x)]
+        image = (sqrt(2π) * width) .* slice
+        expected = zeros(3, 3)
+        expected[1, 1] = 4π * amplitude
+        expected[3, 1] = 4π * amplitude * asymmetry^2 / 3
+        expected[2, 2] = 8π * amplitude * asymmetry
+        expected[3, 3] = 8π * amplitude * asymmetry^2 / 3
+
+        mktempdir() do dir
+            basis = joinpath(dir, "signed-axis.h5")
+            result = pbasex(image; basis, geometry, x, k, l, params, rBF=radial, zIP=limit)
+            @test result.legendre_orders == l
+            @test result.coefficients ≈ expected
+            @test result.reconstructed_image ≈ image
+            @test result.inverted_image ≈ slice
+            @test maximum(abs, result.residuals) < 1e-10
+            @test h5read(basis, "geometry") == "half_plane"
+            @test BASISData(basis).geometry === geometry
+            @test_throws ArgumentError pbasex(image; basis)
+            @test_throws ArgumentError pbasex(image; basis, geometry, quadrant_filter=[1, 1, 0, 0])
+            @test_throws ArgumentError BASISData(basis; geometry=:quadrant)
+
+            q = asymmetry .* collect(x[2:end]) ./ width
+            scale = 1 .+ q.^2 ./ 3
+            @test result.betas[2:end, 1] ≈ 2 .* q ./ scale
+            @test result.betas[2:end, 2] ≈ 2 .* q.^2 ./ (3 .* scale)
+            @test all(isnan, result.betas[1, :])
+
+            flipped = pbasex(reverse(image; dims=1); basis, geometry, make_images=false)
+            @test flipped.IE ≈ result.IE
+            @test flipped.betas[2:end, 1] ≈ -result.betas[2:end, 1]
+            @test flipped.betas[2:end, 2] ≈ result.betas[2:end, 2]
+            symmetric = pbasex((image + reverse(image; dims=1)) ./ 2; basis, geometry, make_images=false)
+            @test maximum(abs, symmetric.betas[2:end, 1]) < 1e-10
+
+            # Retain the original pixel coordinates after cropping and ignore masked data.
+            cropped = image[2:end, 1:end-2]
+            weights = ones(size(cropped))
+            weights[1, 5] = 0
+            cropped[1, 5] = NaN
+            weighted_basis = joinpath(dir, "signed-weighted.h5")
+            weighted = pbasex(cropped; basis=weighted_basis, geometry, x, k, l, params,
+                              rBF=radial, zIP=limit, weights, center=(center[1], center[2]-1),
+                              make_images=false)
+            @test weighted.coefficients ≈ expected
+            @test any(iszero, BASISData(weighted_basis; make_images=false).weights)
+
+            legacy = joinpath(dir, "quadrant.h5")
+            BASISData(legacy; x, make_images=false)
+            @test_throws ArgumentError pbasex(image; basis=legacy, geometry)
+        end
+
+        for radial_basis in (:gaussian, :cubic_bspline)
+            data = BASISData(; geometry, x, k=[1.5, 3.5], l, radial_basis, params=[1.0])
+            G = data.U * (data.S .* data.V')
+            for basis_matrix in (G, data.Ginv)
+                even = reshape(basis_matrix[:, 1], 2 * side - 1, side)
+                odd = reshape(basis_matrix[:, 3], 2 * side - 1, side)
+                @test reverse(even; dims=1) ≈ even
+                @test reverse(odd; dims=1) ≈ -odd
+                @test maximum(abs, odd[side, :]) < 1e-13
+            end
+        end
+    end
+
     @testset "compact cubic B-spline basis" begin
         family = :cubic_bspline
         # With R=0 and l=0, an entire cardinal spline has area h along the ray.

@@ -45,9 +45,12 @@ and matrices. Omit `params` or `radial_basis` if the file cannot verify them.
 
 Pass the same original weights and preprocessing options to `pbasex`.
 When building a weighted basis with `BASISData`, supply the processed
-weight quadrant of size `length(x) × length(x)`. Legacy Julia files without
-weight metadata load as unweighted. Regenerate any legacy basis originally
-built with weights.
+weight matrix. For `nx = length(x)`, the shape is `nx × nx` in quadrant
+mode or `(2nx - 1) × nx` in half-plane mode. Half-plane rows run from
+the positive axial edge at the top through zero to the negative axial
+edge at the bottom. Legacy Julia files without weight metadata load as
+unweighted. Regenerate any legacy basis originally built with weights.
+[Weight handling by geometry](usage.md#weighted-fits)
 
 ## Set the basis definition
 
@@ -55,7 +58,8 @@ built with weights.
 | --- | --- | --- |
 | `x` | `0:511` | Integer radial grid. Use `0:rmax` for a detector sampled at unit pixel spacing. |
 | `k` | `x[2:4:end] .+ 0.5` | Radial centers. |
-| `l` | `[0, 2, 4]` | Distinct nonnegative even Legendre orders, starting with zero for image inversion. |
+| `l` | `[0, 2, 4]` | Distinct nonnegative Legendre orders, starting with zero for image inversion. Quadrant fitting uses even orders. |
+| `geometry` | `:quadrant` | Use `:half_plane` to retain both signs of the vertical axis and fit even and odd orders. |
 | `radial_basis` | `:gaussian` | Built-in family. Use `:cubic_bspline` for compact support. |
 | `params` | Depends on the family | First value is the Gaussian width or the B-spline knot spacing, in pixels. |
 | `rBF` | Selected family | Custom radial function with signature `rBF(r, k, params)`. |
@@ -65,6 +69,19 @@ built with weights.
 The Gaussian is `exp(-(r - k)^2 / (2 * sigma^2))`, where `sigma = params[1]`.
 Its default width is `0.7 * length(x) / length(k)`, and its default
 integration limit truncates it at radius `k + sqrt(20) * sigma`.
+
+Half-plane bases default to `l=0:4` and use a unit-spaced `x` grid
+starting at zero. This grid also defines the radial samples in the
+result. To precompute a half-plane basis, use a distinct path.
+
+```julia
+basis_path = joinpath(mkpath("data"), "gaussian_half_plane_r512_k128_l4.h5")
+basis_data = BASISData(basis_path; geometry=:half_plane, l=0:4, make_images=false)
+```
+
+Supply `geometry=:half_plane` to `pbasex` when using this file. A geometry
+mismatch raises an error. Existing MATLAB and Julia files without a
+geometry field use the quadrant layout. [Forward–backward fitting](usage.md#fit-forwardbackward-asymmetry)
 
 ## Use a compact cubic B-spline
 
@@ -143,8 +160,11 @@ A new basis requires many numerical integrals and a dense SVD. Start Julia
 with `--threads=auto` to parallelize basis evaluation. Reuse a saved basis
 for repeated inversions.
 
-A default-size basis has 262,144 quadrant pixels and 384 basis functions.
-Each dense `Float64` matrix such as `U` or `Ginv` then takes 768 MiB.
+At the default 512 radial samples and 128 Gaussian centers, a quadrant
+basis has 262,144 pixels and 384 basis functions. Each dense `Float64`
+matrix such as `U` or `Ginv` takes 768 MiB. A half-plane basis with
+its default orders has 523,776 pixels and 640 basis functions. Each
+such matrix takes about 2.50 GiB.
 The SVD and intermediate arrays require additional memory. Increasing the
 number of radial centers or angular orders increases the number of columns.
 
@@ -155,18 +175,20 @@ leaves the file as it was.
 
 ## HDF5 layout
 
-For a basis with `nx = length(x)`, `nk = length(k)`, `nl = length(l)`, and
-`q = length(S)`, Julia's native basis file stores these datasets.
+Let `nx = length(x)`, `nk = length(k)`, `nl = length(l)`, and
+`q = length(S)`. The folded detector has `nz = nx` rows for a
+quadrant or `nz = 2nx - 1` rows for a half-plane.
 
 | Dataset | Meaning and shape |
 | --- | --- |
 | `x`, `k`, `l` | Grid, radial centers, and Legendre orders. |
 | `radial_basis` | Built-in family identifier. Older files may omit it for Gaussian bases. |
+| `geometry` | `quadrant` or `half_plane`. A half-plane file uses `nx * (2nx - 1)` pixels in place of `nx²`, with axial rows ordered from positive to negative. Its slice matrix includes the `1/(4π)` normalization. |
 | `params` | Numeric basis parameters. |
-| `weights` | Optional processed weight matrix of size `nx × nx`. |
-| `U`, `S`, `V` | SVD of the projected basis. Sizes are `nx² × q`, `q`, and `(nk * nl) × q`. |
+| `weights` | Optional processed weight matrix of size `nz × nx`. |
+| `U`, `S`, `V` | SVD of the projected basis. Sizes are `(nz * nx) × q`, `q`, and `(nk * nl) × q`. |
 | `frk` | Radial evaluations with shape `nk × nx`. |
-| `Ginv` | Optional central-slice matrix with shape `nx² × (nk * nl)`. |
+| `Ginv` | Optional central-slice matrix with shape `(nz * nx) × (nk * nl)`. |
 | `custom_functions`, `cache_key` | Flags for custom radial and integration functions, and an optional identity string. |
 
 See [MATLAB migration](matlab-migration.md#export-a-julia-basis-for-matlab)
@@ -176,8 +198,8 @@ for the CPBASEX export layout.
 
 | Function | Use |
 | --- | --- |
-| `build_forward_basis(x, k, l, rBF, zIP, params, weights)` | Build the forward operator and return its factors `U, S, V`. Pass `nothing` for an unweighted basis. |
-| `build_central_slice_basis(x, k, l, rBF, params)` | Evaluate the central-slice basis. Multiply this matrix by the fitted coefficient vector. |
+| `build_forward_basis(x, k, l, rBF, zIP, params, weights; geometry)` | Build the forward operator for either geometry and return `U, S, V`. Pass `nothing` for an unweighted basis. |
+| `build_central_slice_basis(x, k, l, rBF, params; geometry)` | Evaluate the central-slice basis for either geometry. Multiply the matrix by the fitted coefficient vector. |
 | `fold_quadrants(image, column, row; quadrant_filter)` | Sum the selected quadrants for an image or stack. |
 | `resize_folded_quadrant(quadrant, nx)` | Crop or zero-pad the folded quadrant to the basis dimensions. |
 | `unfold_quadrant(quadrant; center_offset=true, quadrant_count=4)` | Mirror a folded image and divide by the number of quadrants summed. |

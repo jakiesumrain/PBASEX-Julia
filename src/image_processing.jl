@@ -75,4 +75,52 @@ function resize_folded_quadrant(folded_projection::AbstractArray{T,N}, detector_
     return resized_projection
 end
 
+# Keep both axial hemispheres in detector row order. Mirror only the columns.
+function fold_half_plane(image::AbstractMatrix{T}, center, detector_side, quadrant_filter, weights) where T
+    rows, columns = size(image)
+    center_column, center_row = center
+    1 <= center_column <= columns && 1 <= center_row <= rows ||
+        throw(ArgumentError("Center must lie inside the detector image"))
+    length(quadrant_filter) == 4 && all(in((0, 1)), quadrant_filter) ||
+        throw(ArgumentError("quadrant_filter must have four entries, each 0 or 1"))
+    top_right, top_left, bottom_left, bottom_right = isone.(quadrant_filter)
+    (top_left || top_right) && (bottom_left || bottom_right) ||
+        throw(ArgumentError("Half-plane fitting requires a selected quadrant in each hemisphere"))
+
+    folded = zeros(T, 2 * detector_side - 1, detector_side)
+    multipliers = zeros(T, size(folded))
+    for row in axes(folded, 1)
+        image_row = center_row + row - detector_side
+        1 <= image_row <= rows || continue
+        use_left = row < detector_side ? top_left : row > detector_side ? bottom_left : top_left || bottom_left
+        use_right = row < detector_side ? top_right : row > detector_side ? bottom_right : top_right || bottom_right
+        for column in axes(folded, 2)
+            offset = column - 1
+            precision_sum = zero(T)
+            weighted_signal = zero(T)
+            for (direction, selected) in ((1, use_right), (-1, use_left))
+                selected || continue
+                iszero(offset) && direction == -1 && use_right && continue
+                image_column = center_column + direction * offset
+                1 <= image_column <= columns || continue
+                precision = isnothing(weights) ? one(T) : abs2(weights[image_row, image_column])
+                iszero(precision) && continue
+                weighted_signal += precision * image[image_row, image_column]
+                precision_sum += precision
+            end
+            if !iszero(precision_sum)
+                folded[row, column] = weighted_signal / precision_sum
+                # The unweighted mode gives every observed folded pixel equal weight.
+                multipliers[row, column] = isnothing(weights) ? one(T) : sqrt(precision_sum)
+            end
+        end
+    end
+    return folded, isnothing(weights) && all(isone, multipliers) ? nothing : multipliers
+end
+
+function unfold_half_plane(folded)
+    columns = size(folded, 2)
+    return folded[:, [columns:-1:2; 1:columns]]
+end
+
 end # module ImageProcessing

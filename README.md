@@ -1,9 +1,14 @@
 # PBASEX-Julia
 
 `PBASEX` uses polar basis set expansion to invert velocity-map imaging (VMI)
-projections. It fits a square detector image and returns the energy spectrum,
+projections. It fits a detector image and returns the energy spectrum,
 angular anisotropy coefficients, and optionally the reconstructed projection
 and Abel-inverted central slice.
+
+PBASEX supports two detector geometries. Quadrant mode uses both
+reflection symmetries and fits even Legendre orders. Half-plane mode
+preserves forward–backward asymmetry along an in-plane physical axis and
+fits both even and odd orders.
 
 ## Quick start
 
@@ -42,6 +47,19 @@ axis before fitting. The Gaussian basis is the default. Select
 `radial_basis=:cubic_bspline` when building a compact spline basis.
 [Image alignment](docs/usage.md#align-the-polarization-axis) · [Spline basis](docs/bases.md#use-a-compact-cubic-b-spline)
 
+For a cylindrically symmetric image with distinct upper and lower
+hemispheres, orient the positive physical axis toward the top and use
+half-plane mode with its own basis file.
+
+```julia
+half_plane_basis = joinpath(mkpath("data"), "gaussian_half_plane_r512_k128_l4.h5")
+result = pbasex(image; basis=half_plane_basis, geometry=:half_plane, l=0:4,
+                make_images=false)
+beta_orders = result.legendre_orders[2:end]
+```
+
+[Half-plane fitting and sign convention](docs/usage.md#fit-forwardbackward-asymmetry)
+
 Run the bundled image reconstruction example from the repository root.
 The first script prepares `basis.h5`, and the second uses it to invert the
 bundled detector image and write `out.h5`.
@@ -61,8 +79,10 @@ julia --project=. --threads=auto examples/invert_detector_image.jl
   quadrature samples can produce spurious low-energy peaks.
 - [Migrate from MATLAB CPBASEX](docs/matlab-migration.md) covers using an existing
   MATLAB basis, exporting a compatible basis from Julia, and the measured parity.
-- [Algorithm derivation](docs/pbasex.pdf) describes the Abel transform and polar
-  basis expansion.
+- [Original algorithm derivation](docs/pbasex.pdf) describes the Abel transform
+  and even-order polar basis expansion.
+- [Forward–backward asymmetry](docs/forward-backward-asymmetry.md) derives
+  the implemented half-plane geometry and its odd Legendre terms.
 
 ## Tests
 

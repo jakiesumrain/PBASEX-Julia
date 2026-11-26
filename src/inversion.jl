@@ -3,32 +3,45 @@ module Inversion
 using LinearAlgebra
 
 using ..PBASEXTypes: BASISData, PBASEXResult, basis_grid
-using ..ImageProcessing: fold_quadrants, resize_folded_quadrant, unfold_quadrant
+using ..ImageProcessing: fold_quadrants, resize_folded_quadrant, unfold_quadrant,
+                         fold_half_plane, unfold_half_plane
+using ..MathUtils: detector_dimensions, axial_coordinates
 
 export pbasex
 
 """
-    pbasex(image; basis, options...) -> PBASEXResult
+    pbasex(image; basis, geometry=:quadrant, options...) -> PBASEXResult
 
-Invert a square floating-point detector image with reflection symmetry about
-both image axes. Align the polarization axis vertically along the detector's
-`y` coordinate. The Legendre orders must start with zero and be even.
-Use `center=(column, row)` and `quadrant_filter` to select the input pixels.
-Selected quadrants are normalized to the same scale as the four-quadrant sum.
+Invert a floating-point detector image with a vertical physical symmetry
+axis. The default `geometry=:quadrant` folds about both image axes and fits
+even Legendre orders. Set `geometry=:half_plane` to retain both axial
+hemispheres and fit odd orders as well. In half-plane mode, positive axial
+coordinates point toward the top of the image.
 
 Pass a Julia or MATLAB CPBASEX HDF5 file path as `basis`. An existing
 file supplies the grid and matrices. A new path creates a file using
 the requested basis settings. Select `radial_basis=:cubic_bspline` to
 build a compact radial basis. The default is Gaussian. Pass
 `make_images=false` to calculate only spectra, anisotropies, and coefficients.
+
+# Arguments
+- `image` holds measured detector intensities.
+- `basis` is the path of the HDF5 basis file.
+- `geometry` selects quadrant or half-plane fitting and must match the basis file.
+- `center=(column, row)` and `quadrant_filter` select the detector pixels.
+
+# Returns
+A `PBASEXResult` with the fitted spectrum, anisotropies and their Legendre
+orders, coefficients, and optional reconstructed images.
 """
 function pbasex(image::AbstractMatrix{T};
                 basis::AbstractString,
+                geometry=:quadrant,
                 options...) where {T<:AbstractFloat}
-    fit_input = pre_process_image(image, basis, options)
+    fit_input = pre_process_image(image, basis, options, geometry)
     basis_data = BASISData{T}(basis; fit_input.basis_options..., fit_input.make_images)
     detector_coordinates, radial_centers, legendre_orders = basis_data.x, basis_data.k, basis_data.l
-    validate_angular_orders(legendre_orders)
+    validate_angular_orders(legendre_orders, geometry)
     detector_side = length(detector_coordinates)
     radial_count = length(radial_centers)
     angular_count = length(legendre_orders)
@@ -60,9 +73,11 @@ function pbasex(image::AbstractMatrix{T};
         if !isnothing(basis_data.weights)
             projected_pixels ./= replace(vec(basis_data.weights), zero(T) => T(NaN))
         end
-        reconstructed_image = unfold_quadrant(reshape(projected_pixels, detector_side, detector_side))
+        grid_size = detector_dimensions(detector_side, geometry)
+        unfold = geometry === :half_plane ? unfold_half_plane : unfold_quadrant
+        reconstructed_image = unfold(reshape(projected_pixels, grid_size))
         slice_pixels = (basis_data.Ginv::Matrix{T}) * coefficient_vector
-        inverted_image = unfold_quadrant(reshape(slice_pixels, detector_side, detector_side))
+        inverted_image = unfold(reshape(slice_pixels, grid_size))
         if size(reconstructed_image) == size(image) && fit_input.center == (detector_side, detector_side)
             residuals = image .- reconstructed_image
         else
@@ -70,17 +85,22 @@ function pbasex(image::AbstractMatrix{T};
         end
     end
     return PBASEXResult{T}(energy, energy_spectrum, anisotropy_parameters,
-                           reconstructed_image, inverted_image, residuals, polar_coefficients)
+                           reconstructed_image, inverted_image, residuals, polar_coefficients,
+                           legendre_orders)
 end
 
-function validate_angular_orders(legendre_orders)
-    !isempty(legendre_orders) && first(legendre_orders) == 0 && allunique(legendre_orders) && all(order -> order >= 0 && iseven(order), legendre_orders) ||
-        throw(ArgumentError("Image inversion requires distinct, nonnegative, even Legendre orders starting with zero"))
+function validate_angular_orders(legendre_orders, geometry)
+    !isempty(legendre_orders) && first(legendre_orders) == 0 &&
+        allunique(legendre_orders) && all(>=(0), legendre_orders) ||
+        throw(ArgumentError("Image inversion requires distinct, nonnegative Legendre orders starting with zero"))
+    geometry === :quadrant && any(isodd, legendre_orders) &&
+        throw(ArgumentError("Odd Legendre orders require geometry=:half_plane"))
 end
 
-function pre_process_image(image::AbstractMatrix{T}, basis_file, options) where T
+function pre_process_image(image::AbstractMatrix{T}, basis_file, options, geometry=:quadrant) where T
     image_rows, image_columns = size(image)
-    @assert image_rows == image_columns "Input image must be square, got dimensions ($image_rows, $image_columns)"
+    detector_dimensions(1, geometry)
+    @assert geometry === :half_plane || image_rows == image_columns "Input image must be square, got dimensions ($image_rows, $image_columns)"
     basis_keys = (:x, :k, :l, :radial_basis, :params, :rBF, :zIP, :cache_key)
     processing_keys = (:weights, :make_images, :reg, :center, :quadrant_filter, :alpha)
     unknown_options = setdiff(keys(options), (basis_keys..., processing_keys...))
@@ -98,9 +118,8 @@ function pre_process_image(image::AbstractMatrix{T}, basis_file, options) where 
         @assert size(weights) == size(image) "Input weights must match the image size"
         @assert all(isfinite, weights) "Input weights must be finite"
     end
-    haskey(options, :l) && validate_angular_orders(options[:l])
+    haskey(options, :l) && validate_angular_orders(options[:l], geometry)
 
-    folded_projection = fold_quadrants(image, center...; quadrant_filter=quadrant_filter)
     detector_coordinates = if haskey(options, :x)
         collect(Int, options[:x])
     elseif isfile(basis_file)
@@ -109,14 +128,21 @@ function pre_process_image(image::AbstractMatrix{T}, basis_file, options) where 
         collect(0:511)
     end
     detector_side = length(detector_coordinates)
-    # Preserve MATLAB's scale for a four-quadrant sum when fewer are selected.
-    quadrant_normalization = T(4) / sum(quadrant_filter)
-    fit_pixels = resize_folded_quadrant(folded_projection, detector_side) .* quadrant_normalization
-    fit_weights = if isnothing(weights)
-        nothing
+    if geometry === :half_plane
+        detector_side > 0 || throw(ArgumentError("x must contain at least one grid point"))
+        axial_coordinates(detector_coordinates, geometry)
+        fit_pixels, fit_weights = fold_half_plane(image, center, detector_side, quadrant_filter, weights)
     else
-        folded_pixel_weights = fold_quadrants(weights, center...; quadrant_filter=quadrant_filter)
-        resize_folded_quadrant(folded_pixel_weights, detector_side) .* quadrant_normalization
+        folded_projection = fold_quadrants(image, center...; quadrant_filter=quadrant_filter)
+        # Preserve MATLAB's scale for a four-quadrant sum when fewer are selected.
+        quadrant_normalization = T(4) / sum(quadrant_filter)
+        fit_pixels = resize_folded_quadrant(folded_projection, detector_side) .* quadrant_normalization
+        fit_weights = if isnothing(weights)
+            nothing
+        else
+            folded_pixel_weights = fold_quadrants(weights, center...; quadrant_filter=quadrant_filter)
+            resize_folded_quadrant(folded_pixel_weights, detector_side) .* quadrant_normalization
+        end
     end
     # Weight the measured projection consistently with the forward operator.
     if !isnothing(fit_weights)
@@ -126,6 +152,7 @@ function pre_process_image(image::AbstractMatrix{T}, basis_file, options) where 
     basis_options = Dict{Symbol,Any}(key => options[key] for key in basis_keys if haskey(options, key))
     basis_options[:x] = detector_coordinates
     basis_options[:weights] = fit_weights
+    basis_options[:geometry] = geometry
     return (; fit_pixels, basis_options, make_images, regularization, energy_scale, center)
 end
 

@@ -5,7 +5,7 @@ using FileWatching.Pidfile: trymkpidlock
 
 using ..BasisFunctions: build_forward_basis, cubic_bspline, cubic_bspline_limit
 using ..InverseBasisFunctions: build_central_slice_basis
-using ..MathUtils: meshgrid
+using ..MathUtils: meshgrid, detector_dimensions, axial_coordinates
 
 export PBASEXResult, BASISData
 
@@ -14,7 +14,7 @@ export PBASEXResult, BASISData
 
 Results for one VMI image. `E` contains energy values on the requested scale,
 and `IE` contains the one-dimensional energy spectrum. Columns of
-`betas` follow the nonzero Legendre orders in the basis. The coefficient
+`betas` follow the nonzero `legendre_orders`. The coefficient
 matrix has one row per radial center and one column per Legendre order.
 `inverted_image` is the central velocity slice. `reconstructed_image` is
 the fitted detector projection. Image outputs and residuals are optional.
@@ -27,10 +27,17 @@ struct PBASEXResult{T<:AbstractFloat}
     inverted_image::Union{Matrix{T},Nothing}
     residuals::Union{Matrix{T},Nothing}
     coefficients::Matrix{T}
+    legendre_orders::Union{Vector{Int},Nothing}
 end
 
+PBASEXResult{T}(E, IE, betas, reconstructed_image, inverted_image, residuals, coefficients) where {T<:AbstractFloat} =
+    PBASEXResult{T}(E, IE, betas, reconstructed_image, inverted_image, residuals, coefficients, nothing)
+
+PBASEXResult(E::Vector{T}, IE, betas, reconstructed_image, inverted_image, residuals, coefficients) where {T<:AbstractFloat} =
+    PBASEXResult{T}(E, IE, betas, reconstructed_image, inverted_image, residuals, coefficients)
+
 """
-    BASISData{T}(; x, k, l, radial_basis=:gaussian, params, weights, rBF, zIP, make_images=true)
+    BASISData{T}(; x, k, l, radial_basis=:gaussian, geometry=:quadrant, params, weights, rBF, zIP, make_images=true)
     BASISData{T}(path; cache_key=nothing, kwargs...)
     BASISData([path]; kwargs...)
 
@@ -42,6 +49,8 @@ right singular vectors of the forward operator. `S` holds the singular
 values. The radial table `frk` has one row per radial center and one column
 per sampled radius. `Ginv` maps coefficients to a central slice and is
 omitted if `make_images=false`. Existing MATLAB CPBASEX files are supported.
+Use `geometry=:half_plane` to retain both axial hemispheres and fit odd
+Legendre orders.
 
 Select `radial_basis=:cubic_bspline` for a compact cubic B-spline. Its first
 parameter is the knot spacing in pixels. For a custom `rBF` or `zIP`,
@@ -61,7 +70,14 @@ struct BASISData{T<:AbstractFloat}
     V::Matrix{T}
     frk::Matrix{T}
     Ginv::Union{Matrix{T},Nothing}
+    geometry::Symbol
 end
+
+BASISData{T}(x, k, l, weights, params, rBF, zIP, U, S, V, frk, Ginv) where {T<:AbstractFloat} =
+    BASISData{T}(x, k, l, weights, params, rBF, zIP, U, S, V, frk, Ginv, :quadrant)
+
+BASISData(x, k::Vector{T}, l, weights, params, rBF, zIP, U, S, V, frk, Ginv) where {T<:AbstractFloat} =
+    BASISData{T}(x, k, l, weights, params, rBF, zIP, U, S, V, frk, Ginv)
 
 gaussian(radius, radial_center, basis_parameters) = exp(-(radius - radial_center)^2 / (2 * basis_parameters[1]^2))
 function gaussian_limit(detector_radius, radial_center::T, basis_parameters) where T
@@ -82,9 +98,13 @@ end
 function basis_definition(::Type{T}, options) where T
     detector_coordinates = collect(Int, get(options, :x, 0:511))
     isempty(detector_coordinates) && throw(ArgumentError("x must contain at least one grid point"))
+    geometry = get(options, :geometry, :quadrant)
+    grid_size = detector_dimensions(length(detector_coordinates), geometry)
+    axial_coordinates(detector_coordinates, geometry)
     radial_centers = collect(T, get(options, :k, detector_coordinates[2:4:end] .+ 0.5))
     isempty(radial_centers) && throw(ArgumentError("k must contain at least one radial center"))
-    legendre_orders = collect(Int, get(options, :l, (0, 2, 4)))
+    default_orders = geometry === :half_plane ? (0, 1, 2, 3, 4) : (0, 2, 4)
+    legendre_orders = collect(Int, get(options, :l, default_orders))
     !isempty(legendre_orders) && all(>=(0), legendre_orders) || throw(ArgumentError("l must contain nonnegative orders"))
     basis_family = get(options, :radial_basis, :gaussian)
     default_radial_profile, default_line_of_sight_limit = radial_functions(basis_family)
@@ -94,8 +114,8 @@ function basis_definition(::Type{T}, options) where T
     basis_parameters = collect(T, get(options, :params, [default_width]))
     pixel_weights = get(options, :weights, nothing)
     if !isnothing(pixel_weights)
-        size(pixel_weights) == (length(detector_coordinates), length(detector_coordinates)) ||
-            throw(ArgumentError("Basis weights must match the square grid"))
+        size(pixel_weights) == grid_size ||
+            throw(ArgumentError("Basis weights must match the detector grid $grid_size"))
         pixel_weights = Matrix{T}(pixel_weights)
     end
     radial_profile = get(options, :rBF, default_radial_profile)::Function
@@ -112,7 +132,7 @@ function basis_definition(::Type{T}, options) where T
             throw(ArgumentError("The cubic B-spline requires a positive knot spacing"))
     end
     # Use the public keyword names so the definition can be passed to the constructor.
-    return (; x=detector_coordinates, k=radial_centers, l=legendre_orders,
+    return (; x=detector_coordinates, k=radial_centers, l=legendre_orders, geometry,
              params=basis_parameters, weights=pixel_weights, rBF=radial_profile, zIP=line_of_sight_limit)
 end
 
@@ -122,7 +142,7 @@ function BASISData{T}(; make_images::Bool=true, kwargs...) where {T<:AbstractFlo
         U, S, V = kwargs[:U], kwargs[:S], kwargs[:V]
     else
         U, S, V = build_forward_basis(definition.x, definition.k, definition.l, definition.rBF,
-                                      definition.zIP, definition.params, definition.weights)
+                                      definition.zIP, definition.params, definition.weights; definition.geometry)
     end
     radial_table = get(kwargs, :frk) do
         radius_grid, radial_center_grid = meshgrid(T.(definition.x), definition.k)
@@ -130,14 +150,15 @@ function BASISData{T}(; make_images::Bool=true, kwargs...) where {T<:AbstractFlo
     end
     slice_basis = if make_images
         get(kwargs, :Ginv) do
-            build_central_slice_basis(definition.x, definition.k, definition.l, definition.rBF, definition.params)
+            build_central_slice_basis(definition.x, definition.k, definition.l, definition.rBF,
+                                      definition.params; definition.geometry)
         end
     else
         nothing
     end
     return BASISData{T}(definition.x, definition.k, definition.l, definition.weights,
                         definition.params, definition.rBF, definition.zIP, U, S, V,
-                        radial_table, slice_basis)
+                        radial_table, slice_basis, definition.geometry)
 end
 
 BASISData(; kwargs...) = BASISData{Float64}(; kwargs...)
@@ -170,6 +191,13 @@ function load_basis(::Type{T}, path, make_images, cache_key, options) where T
     return h5open(path, "r") do basis_file
         is_matlab_basis = haskey(basis_file, "Up") && !haskey(basis_file, "U")
         detector_coordinates = vec(Int.(read(basis_file, "x")))
+        geometry = haskey(basis_file, "geometry") ? Symbol(read(basis_file, "geometry")) : :quadrant
+        grid_size = detector_dimensions(length(detector_coordinates), geometry)
+        axial_coordinates(detector_coordinates, geometry)
+        is_matlab_basis && geometry !== :quadrant &&
+            throw(ArgumentError("MATLAB basis files require quadrant geometry"))
+        get(options, :geometry, geometry) === geometry ||
+            throw(ArgumentError("Requested geometry does not match the basis in $path"))
         radial_centers = vec(T.(read(basis_file, "k")))
         legendre_orders = vec(Int.(read(basis_file, "l")))
         pixel_weights = haskey(basis_file, "weights") ? convert(Matrix{T}, read(basis_file, "weights")) : nothing
@@ -222,12 +250,12 @@ function load_basis(::Type{T}, path, make_images, cache_key, options) where T
         V = convert(Matrix{T}, read(basis_file, "V"))
         radial_table = convert(Matrix{T}, read(basis_file, "frk"))
         is_matlab_basis && (V = permutedims(V))
-        pixel_count = length(detector_coordinates)^2
+        pixel_count = prod(grid_size)
         basis_count = length(radial_centers) * length(legendre_orders)
         singular_value_count = length(S)
         size(U) == (pixel_count, singular_value_count) && size(V) == (basis_count, singular_value_count) &&
             size(radial_table) == (length(radial_centers), length(detector_coordinates)) && 0 < singular_value_count <= min(pixel_count, basis_count) &&
-            (isnothing(pixel_weights) || size(pixel_weights) == (length(detector_coordinates), length(detector_coordinates))) ||
+            (isnothing(pixel_weights) || size(pixel_weights) == grid_size) ||
             throw(ArgumentError("Basis dimensions are inconsistent in $path"))
         slice_basis = nothing
         if make_images
@@ -238,14 +266,14 @@ function load_basis(::Type{T}, path, make_images, cache_key, options) where T
                 radial_profile === unavailable_basis_function &&
                     throw(ArgumentError("The basis in $path has no central-slice matrix or radial function"))
                 slice_basis = build_central_slice_basis(detector_coordinates, radial_centers,
-                                                        legendre_orders, radial_profile, basis_parameters)
+                                                        legendre_orders, radial_profile, basis_parameters; geometry)
             end
             size(slice_basis) == (pixel_count, basis_count) ||
                 throw(ArgumentError("Central-slice matrix has inconsistent dimensions in $path"))
         end
         return BASISData{T}(detector_coordinates, radial_centers, legendre_orders, pixel_weights,
                             basis_parameters, radial_profile, line_of_sight_limit, U, S, V,
-                            radial_table, slice_basis)
+                            radial_table, slice_basis, geometry)
     end
 end
 
@@ -262,6 +290,7 @@ function save_basis_data(data::BASISData, path::AbstractString, cache_key)
             default_rBF, default_zIP = radial_functions(family)
             write(f, "custom_functions", UInt8[data.rBF !== default_rBF, data.zIP !== default_zIP])
             write(f, "radial_basis", String(family))
+            write(f, "geometry", String(data.geometry))
             isnothing(cache_key) || write(f, "cache_key", String(cache_key))
         end
         # Serialize publication when different processes choose the same filename.
