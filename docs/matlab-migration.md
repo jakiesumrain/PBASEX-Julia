@@ -8,7 +8,10 @@ differences between the solvers and preserves the original radial sampling.
 ## Reuse a MATLAB basis in Julia
 
 Pass a CPBASEX HDF5 basis containing `Up` to `pbasex`. Julia reads its grid
-and handles the CPBASEX matrix orientations.
+and handles the CPBASEX matrix orientations in the default
+`geometry=:quadrant` mode. Julia's half-plane mode uses a native Julia
+basis file with a signed vertical axis. Generate it under a separate
+filename for odd-order fits. [Half-plane workflow](usage.md#fit-forwardbackward-asymmetry)
 
 ```julia
 using PBASEX, DelimitedFiles
@@ -72,13 +75,15 @@ end
 ```
 
 With CPBASEX on the MATLAB path, load the file with
-`loadG('data/julia-basis/G_r512_k128_l10.h5', 1)`. This export assumes an
-unweighted basis and includes the central-slice matrix.
+`loadG('data/julia-basis/G_r512_k128_l10.h5', 1)`. This export uses an
+unweighted quadrant basis and includes the central-slice matrix. Half-plane
+files use a different row layout and slice normalization, so use them
+with the Julia half-plane workflow.
 
 ## Validation results
 
-These comparisons used Julia 1.11.3 and MATLAB R2024b with all four quadrants
-selected and unweighted fits. Relative L2 difference is the norm of the
+These quadrant-mode comparisons used Julia 1.11.3 and MATLAB R2024b with
+all four quadrants selected and unweighted fits. Relative L2 difference is the norm of the
 elementwise difference divided by the norm of the reference output.
 
 ### Bundled example image

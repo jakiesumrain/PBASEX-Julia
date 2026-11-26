@@ -9,6 +9,13 @@ $$
 J(R,k) = \int_0^\infty f_k\!\left(\sqrt{R^2 + u^2}\right)\,du.
 $$
 
+For angular order $\ell$, the integrand also contains
+$P_\ell(z/\sqrt{R^2+u^2})$, where $z$ is the signed coordinate along the
+vertical physical axis. Half-plane geometry samples both signs of $z$
+using the same radial integration bounds. Reversing $z$ preserves even
+columns and reverses odd columns, while the integrand remains even in the
+line-of-sight coordinate $u$. [Half-plane forward operator](forward-backward-asymmetry.md#3-the-pbasex-approach)
+
 At $R<k$, the line of sight crosses the shell at $u_* = \sqrt{k^2-R^2}$.
 A Gaussian shell of width $\sigma$ contributes mostly near this distance.
 For a central pixel, $R=0$ and $u_*=k$. A central pixel can therefore receive

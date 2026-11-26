@@ -180,4 +180,19 @@ function pol2cart(r, θ)
     return x, y
 end
 
+function detector_dimensions(side, geometry)
+    geometry === :quadrant && return (side, side)
+    geometry === :half_plane && return (2 * side - 1, side)
+    throw(ArgumentError("geometry must be :quadrant or :half_plane"))
+end
+
+function axial_coordinates(detector_coordinates, geometry)
+    geometry === :quadrant && return detector_coordinates
+    detector_dimensions(length(detector_coordinates), geometry)
+    detector_coordinates == 0:(length(detector_coordinates) - 1) ||
+        throw(ArgumentError("Half-plane geometry requires a unit-spaced x grid starting at zero"))
+    # Detector rows run from +z at the top to -z at the bottom.
+    return [reverse(detector_coordinates); -detector_coordinates[2:end]]
+end
+
 end # module MathUtils

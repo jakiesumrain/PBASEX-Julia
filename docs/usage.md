@@ -1,8 +1,10 @@
 # Run an inversion
 
 Start Julia with `julia --project=. --threads=auto` from the repository root.
-Use a square `Float64` or `Float32` matrix of finite intensities whose rows and
+Use a `Float64` or `Float32` matrix of finite intensities whose rows and
 columns follow the detector image. One `pbasex` call processes one image.
+The default quadrant geometry requires a square image. Half-plane
+geometry also accepts rectangular images.
 
 ```julia
 using PBASEX, DelimitedFiles
@@ -17,6 +19,11 @@ the Julia working directory. PBASEX reads an existing file or creates one
 at a new path whose parent directory exists. Set `make_images=true` to
 include the fitted detector projection and Abel-inverted central slice.
 [Basis selection](bases.md#select-a-basis)
+
+| Geometry | Detector symmetry used | Default orders for a new basis |
+| --- | --- | --- |
+| `:quadrant` | Left–right and up–down reflection | `0, 2, 4` |
+| `:half_plane` | Left–right reflection about the vertical physical axis | `0, 1, 2, 3, 4` |
 
 ## Set the image center and quadrants
 
@@ -45,8 +52,38 @@ For a 1024 × 1024 image, this gives `(474, 548)` in one-based
 `(column, row)` coordinates. A transpose gives `(474, 477)` because it
 swaps axes without reversing the new row axis. With all four quadrants
 and even Legendre orders, the transposed and rotated images give
-equivalent fits. When using pixel weights, apply the same transformation
-to the weight image. Quadrant selection refers to the transformed image.
+equivalent fits. With odd orders, the choice reverses the positive
+direction in this example and therefore the odd beta signs. When using
+pixel weights, apply the same transformation to the weight image.
+Quadrant selection refers to the transformed image.
+
+### Fit forward–backward asymmetry
+
+Use `geometry=:half_plane` for a cylindrically symmetric image whose
+vertical hemispheres can differ. Align the physical axis vertically and
+orient its positive direction toward the top of the image. Pass a separate
+basis filename for this geometry.
+
+```julia
+signed_basis = joinpath(mkpath("data"), "gaussian-half-plane-r512-l4.h5")
+result = pbasex(aligned_image; basis=signed_basis, center=aligned_center,
+                geometry=:half_plane, l=0:4, make_images=false)
+result.legendre_orders[2:end]  # The order of the beta columns
+```
+
+Half-plane mode averages the selected left and right pixels at each signed
+axial coordinate. The axis column contributes once. Reconstructions mirror
+only the columns. Flipping the image top to bottom and updating its center
+reverses odd beta signs. The angle-integrated spectrum still comes from
+order zero. Half-plane mode fits in detector-pixel intensity units.
+The legacy quadrant mode fits the four-quadrant sum, so absolute fitted
+intensities use a different normalization.
+
+The selected quadrants must include at least one from each hemisphere.
+Where only one selected side has a pixel, the fit uses that measurement.
+Folded positions with no measured pixel have zero fit weight. Reuse the
+same processed weight map when reopening a named basis.
+[Theory and analytic example](forward-backward-asymmetry.md)
 
 ### Select quadrants
 
@@ -60,12 +97,12 @@ CPBASEX order.
 | 3 | Bottom-left |
 | 4 | Bottom-right |
 
-Use `[1, 1, 1, 1]` for all quadrants or `[1, 0, 0, 0]` for only the top-right.
-The fit scales the selected sum by four divided by the number selected. For
-a symmetric image, choosing fewer quadrants therefore preserves the
-four-quadrant intensity scale.
+Use `[1, 1, 1, 1]` for all quadrants. In quadrant mode, `[1, 0, 0, 0]`
+selects only the top-right. The quadrant fit scales the selected sum by
+four divided by the number selected. In half-plane mode, `[1, 0, 0, 1]`
+selects the right side in both hemispheres.
 
-The folded quadrant starts at the center and extends as far as the selected
+In quadrant mode, the folded quadrant starts at the center and extends as far as the selected
 quadrants have pixels in common. Julia crops or zero-pads each dimension to
 the basis size. With all quadrants selected, the last radius with complete
 detector coverage is the shortest distance from the center to any image edge.
@@ -90,10 +127,21 @@ are unevenly spaced on that axis.
 
 ### Weighted fits
 
-Julia folds and resizes the weight image separately, then multiplies both the
-folded detector image and the corresponding rows of the forward matrix by
-the processed weights. For a desired inverse-variance weight in the
-least-squares objective, use an inverse standard deviation as the multiplier.
+In quadrant mode, Julia folds and resizes the weight image separately.
+It multiplies the folded detector image and forward-matrix rows by those
+processed weights.
+
+In half-plane mode, mirrored measurements with multipliers $w_i$ are
+averaged with weights $w_i^2$. The folded multiplier is
+$\sqrt{\sum_i w_i^2}$. A zero multiplier removes the corresponding
+observation. To use independent inverse-variance weights, pass inverse
+standard deviations as the pixel multipliers.
+
+With `weights=nothing`, each observed half-plane position has equal fit
+weight after folding. With an explicit array of ones, each original
+detector pixel has equal weight, so a folded pair has twice the
+least-squares weight of a single observed pixel.
+
 Keep the original weight image, center, and quadrant selection together when
 reusing a named weighted basis. Choose a new basis filename if the processed
 weights change. Reconstructed projection pixels with zero folded weight are
@@ -106,6 +154,7 @@ weights change. Reconstructed projection pixels with zero folded weight are
 | `E` | Vector of `length(x)` energy samples on the basis grid. |
 | `IE` | Vector of `length(x)` intensity values. |
 | `betas` | Matrix with one row per energy and one column per nonzero Legendre order, in basis order. Each value is the corresponding angular component divided by `IE`. At zero `IE`, entries are `NaN`. |
+| `legendre_orders` | Legendre orders in coefficient-column order, including zero. `legendre_orders[2:end]` labels the beta columns. |
 | `coefficients` | Matrix with `length(k)` radial centers as rows and `length(l)` Legendre orders as columns. |
 | `reconstructed_image` | Fitted detector projection, or `nothing` with `make_images=false`. |
 | `inverted_image` | Abel-inverted central slice, or `nothing` with `make_images=false`. |
