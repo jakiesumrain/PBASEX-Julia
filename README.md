@@ -96,5 +96,7 @@ If you use this software in research, cite García, Nahon, and Powis (2004),
 *Review of Scientific Instruments* 75, 4989–4996.
 [Original pBASEX paper](https://doi.org/10.1063/1.1807578)
 
-PBASEX-Julia is a Julia port of Elio Gilbert Champenois's MATLAB and Python
-implementation, distributed under the MIT license. [License](LICENSE) · [Upstream CPBASEX repository](https://github.com/e-champenois/CPBASEX)
+PBASEX-Julia builds on Elio Gilbert Champenois's CPBASEX implementation in
+MATLAB and Python. It adds compact cubic B-spline radial bases and half-plane
+inversion with odd Legendre orders for forward–backward asymmetry. The project
+is distributed under the MIT license. [License](LICENSE) · [CPBASEX repository](https://github.com/e-champenois/CPBASEX)
