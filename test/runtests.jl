@@ -151,12 +151,19 @@ using Test
             data = BASISData{Float64}(basis; x, k, l)
             coefficients = [2.0 0.5; 1.0 -0.2]
             projection = data.U * (data.S .* (data.V' * vec(coefficients)))
-            image = unfold_quadrant(reshape(projection, length(x), length(x)))
+            image = unfold_quadrant(reshape(projection, length(x), length(x)); quadrant_count=1)
 
             @test isfile(basis)
             result = pbasex(image; basis)
             @test result isa PBASEXResult{Float64}
             @test result.coefficients ≈ coefficients
+            half = pbasex(image; basis=joinpath(dir, "half.h5"), x, k, l, geometry=:half_plane)
+            @test half.coefficients ≈ result.coefficients
+            @test half.IE ≈ result.IE
+            @test half.betas[2:end, :] ≈ result.betas[2:end, :]
+            @test half.inverted_image ≈ result.inverted_image
+            @test half.reconstructed_image ≈ result.reconstructed_image
+            @test maximum(abs, result.residuals) < 1e-12
             @test result.reconstructed_image ≈ image
             @test size(result.inverted_image) == size(image)
             @test pbasex(image; basis, quadrant_filter=[1, 0, 0, 0]).IE ≈ result.IE
@@ -370,12 +377,12 @@ using Test
 
             c = [2.0 0.5; 1.0 -0.2]
             projection = spline.U * (spline.S .* (spline.V' * vec(c)))
-            image = unfold_quadrant(reshape(projection, length(x), length(x)))
+            image = unfold_quadrant(reshape(projection, length(x), length(x)); quadrant_count=1)
             result = pbasex(image; basis=spline_path, x, k, l, params, radial_basis=family,
                             make_images=false)
             @test result.coefficients ≈ c
             @test pbasex(image; basis=spline_path).inverted_image ≈
-                  unfold_quadrant(reshape(spline.Ginv * vec(c), length(x), length(x)))
+                  unfold_quadrant(reshape(spline.Ginv * vec(c), length(x), length(x)); quadrant_count=1) ./ (4π)
             @test_throws ArgumentError pbasex(image; basis=spline_path, radial_basis=:gaussian)
         end
     end

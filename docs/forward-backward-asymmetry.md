@@ -119,22 +119,20 @@ coefficient relative to the input image orientation.
 The data vector $\mathbf b$ then has $n_r(2n_r-1)$ entries. Sample
 (5) at the same coordinates and with the same intensity convention to
 make the rows of $G$. Each column corresponds to a pair $(k,\ell)$.
-With an optional diagonal matrix of pixel multipliers $W$ and a scalar
-regularization parameter $\lambda\ge0$, fit
+With a scalar regularization parameter $\lambda\ge0$, fit
 
 $$
 \widehat{\mathbf c}
 =\arg\min_{\mathbf c}\left(
-\lVert W(G\mathbf c-\mathbf b)\rVert_2^2
+\lVert G\mathbf c-\mathbf b\rVert_2^2
 +\lambda\lVert\mathbf c\rVert_2^2\right).
 \tag{7}
 $$
 
-The usual SVD solution applies to $WG$ and $W\mathbf b$. With paired
-$+z$ and $-z$ pixels and equal multipliers within each pair, the even
-and odd columns are orthogonal in the weighted detector inner product.
-A mask or unequal multipliers can couple them. A joint fit on the signed
-half-plane covers both cases.
+The usual SVD solution applies to $G$ and $\mathbf b$. With matched
+coverage at $+z$ and $-z$, the even and odd columns are orthogonal
+because their products cancel in reflected pairs. Incomplete coverage
+can break this orthogonality.
 
 The fitted projection is $G\widehat{\mathbf c}$. For the central velocity
 slice, evaluate the unprojected basis

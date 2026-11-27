@@ -53,9 +53,8 @@ For a 1024 × 1024 image, this gives `(474, 548)` in one-based
 swaps axes without reversing the new row axis. With all four quadrants
 and even Legendre orders, the transposed and rotated images give
 equivalent fits. With odd orders, the choice reverses the positive
-direction in this example and therefore the odd beta signs. When using
-pixel weights, apply the same transformation to the weight image.
-Quadrant selection refers to the transformed image.
+direction in this example and therefore the odd beta signs. Quadrant
+selection refers to the transformed image.
 
 ### Fit forward–backward asymmetry
 
@@ -75,14 +74,12 @@ Half-plane mode averages the selected left and right pixels at each signed
 axial coordinate. The axis column contributes once. Reconstructions mirror
 only the columns. Flipping the image top to bottom and updating its center
 reverses odd beta signs. The angle-integrated spectrum still comes from
-order zero. Half-plane mode fits in detector-pixel intensity units.
-The legacy quadrant mode fits the four-quadrant sum, so absolute fitted
-intensities use a different normalization.
+order zero. Both geometries fit in detector-pixel intensity units.
 
 The selected quadrants must include at least one from each hemisphere.
 Where only one selected side has a pixel, the fit uses that measurement.
-Folded positions with no measured pixel have zero fit weight. Reuse the
-same processed weight map when reopening a named basis.
+The half-plane fit excludes folded positions with no measured pixel.
+Reuse the same detector coverage when reopening a named half-plane basis.
 [Theory and analytic example](forward-backward-asymmetry.md)
 
 ### Select quadrants
@@ -98,8 +95,9 @@ CPBASEX order.
 | 4 | Bottom-right |
 
 Use `[1, 1, 1, 1]` for all quadrants. In quadrant mode, `[1, 0, 0, 0]`
-selects only the top-right. The quadrant fit scales the selected sum by
-four divided by the number selected. In half-plane mode, `[1, 0, 0, 1]`
+selects only the top-right. The quadrant fit averages the selected quadrants.
+It infers the full distribution using the assumed reflection symmetries.
+In half-plane mode, `[1, 0, 0, 1]`
 selects the right side in both hemispheres.
 
 In quadrant mode, the folded quadrant starts at the center and extends as far as the selected
@@ -117,42 +115,37 @@ Bins at larger radii depend on a fit to incomplete detector coverage.
 | `alpha` | `1.0` | Positive calibration factor in `E = alpha * r^2`. With the default, the axis is in pixel². |
 | `reg` | `0.0` | Nonnegative Tikhonov regularization. With positive `reg`, the solver uses `s / (s^2 + reg)` for singular value `s`. At zero it takes a pseudoinverse with a numerical cutoff. |
 | `make_images` | `true` | Return the fitted projection and inverted slice. Set to `false` to skip generating or reading the central-slice matrix. |
-| `weights` | `nothing` | Finite pixel multipliers with the same size and element type as the input image. |
 
-`IE` is the raw fitted one-dimensional energy distribution. The radial to
-energy conversion multiplies the isotropic radial profile by `r / (2 * alpha)`.
-Changing `alpha` therefore changes both the energy axis and intensity per unit
-energy. If you integrate the spectrum, use the spacing in `E` because the bins
-are unevenly spaced on that axis.
+### Physical units and peak yields
 
-### Weighted fits
+For a histogram of detected electrons on a unit-pixel grid, both geometries
+return the following quantities. Any prior rescaling of the input intensity
+carries through to the spectrum and both images.
 
-In quadrant mode, Julia folds and resizes the weight image separately.
-It multiplies the folded detector image and forward-matrix rows by those
-processed weights.
+- `IE` samples the angle-integrated yield density $dN/dE$. Its units are
+  electrons/eV when $E$ is calibrated in eV, or electrons/px² at `alpha=1`.
+  The fitted electron yield in a peak is $\int_{E_a}^{E_b} I(E)\,dE$.
+  Integrate with the actual spacing of `result.E`, interpolating at the
+  window edges. The factor $r/(2\alpha)$ in `IE` already accounts for the
+  change of variable $E=\alpha r^2$. The least-squares fit does not impose
+  exact count conservation.
+- `reconstructed_image` gives the fitted detector projection in electrons
+  per detector pixel. Each pixel samples the line-of-sight integral of the
+  fitted 3D density. `residuals` uses the same units.
+- `inverted_image` samples that 3D density in the central plane, in
+  electrons/px³ for velocity coordinates expressed in detector pixels.
+  A count in a finite slab requires integrating the density over the slab
+  volume. Summing the 2D slice alone omits its depth.
 
-In half-plane mode, mirrored measurements with multipliers $w_i$ are
-averaged with weights $w_i^2$. The folded multiplier is
-$\sqrt{\sum_i w_i^2}$. A zero multiplier removes the corresponding
-observation. To use independent inverse-variance weights, pass inverse
-standard deviations as the pixel multipliers.
-
-With `weights=nothing`, each observed half-plane position has equal fit
-weight after folding. With an explicit array of ones, each original
-detector pixel has equal weight, so a folded pair has twice the
-least-squares weight of a single observed pixel.
-
-Keep the original weight image, center, and quadrant selection together when
-reusing a named weighted basis. Choose a new basis filename if the processed
-weights change. Reconstructed projection pixels with zero folded weight are
-`NaN`. [Reusing weighted basis files](bases.md#reuse-a-weighted-basis)
+For a derivation of the statistical uncertainties from raw detector counts,
+see [Counting errors](counting-errors.md).
 
 ## Read and save the results
 
 | Field | Shape and meaning |
 | --- | --- |
 | `E` | Vector of `length(x)` energy samples on the basis grid. |
-| `IE` | Vector of `length(x)` intensity values. |
+| `IE` | Vector of `length(x)` samples of $dN/dE$. |
 | `betas` | Matrix with one row per energy and one column per nonzero Legendre order, in basis order. Each value is the corresponding angular component divided by `IE`. At zero `IE`, entries are `NaN`. |
 | `legendre_orders` | Legendre orders in coefficient-column order, including zero. `legendre_orders[2:end]` labels the beta columns. |
 | `coefficients` | Matrix with `length(k)` radial centers as rows and `length(l)` Legendre orders as columns. |
@@ -181,5 +174,5 @@ end
 ```
 
 For a sequence of images, loop over matrices and pass the same named basis
-when they share a grid and weighting. The same basis file can be used with
+when they share a grid and detector coverage. The same basis file can be used with
 different values of `alpha` and `reg`.

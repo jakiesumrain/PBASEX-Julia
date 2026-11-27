@@ -74,9 +74,13 @@ function pbasex(image::AbstractMatrix{T};
             projected_pixels ./= replace(vec(basis_data.weights), zero(T) => T(NaN))
         end
         grid_size = detector_dimensions(detector_side, geometry)
-        unfold = geometry === :half_plane ? unfold_half_plane : unfold_quadrant
+        unfold = geometry === :half_plane ? unfold_half_plane : mirror_quadrant
         reconstructed_image = unfold(reshape(projected_pixels, grid_size))
         slice_pixels = (basis_data.Ginv::Matrix{T}) * coefficient_vector
+        # CPBASEX quadrant slice matrices omit the angular density factor.
+        if geometry === :quadrant
+            slice_pixels ./= 4 * T(π)
+        end
         inverted_image = unfold(reshape(slice_pixels, grid_size))
         if size(reconstructed_image) == size(image) && fit_input.center == (detector_side, detector_side)
             residuals = image .- reconstructed_image
@@ -88,6 +92,8 @@ function pbasex(image::AbstractMatrix{T};
                            reconstructed_image, inverted_image, residuals, polar_coefficients,
                            legendre_orders)
 end
+
+mirror_quadrant(pixels) = unfold_quadrant(pixels; quadrant_count=1)
 
 function validate_angular_orders(legendre_orders, geometry)
     !isempty(legendre_orders) && first(legendre_orders) == 0 &&
@@ -134,14 +140,14 @@ function pre_process_image(image::AbstractMatrix{T}, basis_file, options, geomet
         fit_pixels, fit_weights = fold_half_plane(image, center, detector_side, quadrant_filter, weights)
     else
         folded_projection = fold_quadrants(image, center...; quadrant_filter=quadrant_filter)
-        # Preserve MATLAB's scale for a four-quadrant sum when fewer are selected.
-        quadrant_normalization = T(4) / sum(quadrant_filter)
-        fit_pixels = resize_folded_quadrant(folded_projection, detector_side) .* quadrant_normalization
+        selected_count = sum(quadrant_filter)
+        fit_pixels = resize_folded_quadrant(folded_projection, detector_side) ./ T(selected_count)
         fit_weights = if isnothing(weights)
             nothing
         else
             folded_pixel_weights = fold_quadrants(weights, center...; quadrant_filter=quadrant_filter)
-            resize_folded_quadrant(folded_pixel_weights, detector_side) .* quadrant_normalization
+            # Preserve the forward-operator scale recorded in existing basis files.
+            resize_folded_quadrant(folded_pixel_weights, detector_side) .* (T(4) / selected_count)
         end
     end
     # Weight the measured projection consistently with the forward operator.

@@ -13,11 +13,13 @@ export PBASEXResult, BASISData
     PBASEXResult{T}
 
 Results for one VMI image. `E` contains energy values on the requested scale,
-and `IE` contains the one-dimensional energy spectrum. Columns of
+and `IE` contains the angle-integrated yield per unit energy. Columns of
 `betas` follow the nonzero `legendre_orders`. The coefficient
 matrix has one row per radial center and one column per Legendre order.
-`inverted_image` is the central velocity slice. `reconstructed_image` is
-the fitted detector projection. Image outputs and residuals are optional.
+`inverted_image` samples the 3D density in the central velocity plane.
+For input in electron counts on a unit-pixel grid, its units are electrons
+per cubic pixel. `reconstructed_image` is the fitted detector projection in
+electrons per detector pixel. Image outputs and residuals are optional.
 """
 struct PBASEXResult{T<:AbstractFloat}
     E::Vector{T}

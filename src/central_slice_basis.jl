@@ -31,7 +31,8 @@ plane at line-of-sight coordinate zero. Each entry is the radial profile times
 # Returns
 A matrix with one row per slice pixel and one column per basis function.
 The radial center varies fastest among the columns, as in `build_forward_basis`.
-Multiply `Ginv` by the fitted coefficient vector to recover the slice.
+Multiply `Ginv` by the fitted coefficient vector to recover the slice,
+then divide by `4π` for the CPBASEX-compatible quadrant matrix.
 """
 function build_central_slice_basis(detector_coordinates::AbstractVector, radial_centers::AbstractVector{T},
                                    legendre_orders::AbstractVector{Int}, radial_profile::Function,
