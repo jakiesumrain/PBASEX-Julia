@@ -109,6 +109,11 @@ If you use this software in research, cite García, Nahon, and Powis (2004),
 [Original pBASEX paper](https://doi.org/10.1063/1.1807578)
 
 PBASEX-Julia builds on Elio Gilbert Champenois's CPBASEX implementation in
-MATLAB and Python. It adds compact cubic B-spline radial bases and half-plane
-inversion with odd Legendre orders for forward–backward asymmetry. The project
-is distributed under the MIT license. [License](LICENSE) · [CPBASEX repository](https://github.com/e-champenois/CPBASEX)
+MATLAB and Python. The Julia package adds compact cubic B-spline radial bases,
+half-plane inversion with odd Legendre orders for forward–backward asymmetry,
+and uncertainty estimates for electron spectra and angular anisotropies.
+It propagates Poisson counting errors from detector histograms and estimates
+shot-to-shot uncertainty by bootstrapping corrected event checkpoints.
+[CPBASEX repository](https://github.com/e-champenois/CPBASEX)
+
+PBASEX-Julia is distributed under the MIT license. [License](LICENSE)
