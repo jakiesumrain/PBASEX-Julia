@@ -41,17 +41,6 @@ its full path. When loading a MATLAB basis, let the file supply the grid
 and matrices. Omit `params` or `radial_basis` if the file cannot verify them.
 [MATLAB basis files](matlab-migration.md#reuse-a-matlab-basis-in-julia)
 
-### Reuse a weighted basis
-
-Pass the same original weights and preprocessing options to `pbasex`.
-When building a weighted basis with `BASISData`, supply the processed
-weight matrix. For `nx = length(x)`, the shape is `nx × nx` in quadrant
-mode or `(2nx - 1) × nx` in half-plane mode. Half-plane rows run from
-the positive axial edge at the top through zero to the negative axial
-edge at the bottom. Legacy Julia files without weight metadata load as
-unweighted. Regenerate any legacy basis originally built with weights.
-[Weight handling by geometry](usage.md#weighted-fits)
-
 ## Set the basis definition
 
 | Keyword | Default for a new basis | Meaning |
@@ -185,7 +174,6 @@ quadrant or `nz = 2nx - 1` rows for a half-plane.
 | `radial_basis` | Built-in family identifier. Older files may omit it for Gaussian bases. |
 | `geometry` | `quadrant` or `half_plane`. A half-plane file uses `nx * (2nx - 1)` pixels in place of `nx²`, with axial rows ordered from positive to negative. Its slice matrix includes the `1/(4π)` normalization. |
 | `params` | Numeric basis parameters. |
-| `weights` | Optional processed weight matrix of size `nz × nx`. |
 | `U`, `S`, `V` | SVD of the projected basis. Sizes are `(nz * nx) × q`, `q`, and `(nk * nl) × q`. |
 | `frk` | Radial evaluations with shape `nk × nx`. |
 | `Ginv` | Optional central-slice matrix with shape `(nz * nx) × (nk * nl)`. |
@@ -198,8 +186,8 @@ for the CPBASEX export layout.
 
 | Function | Use |
 | --- | --- |
-| `build_forward_basis(x, k, l, rBF, zIP, params, weights; geometry)` | Build the forward operator for either geometry and return `U, S, V`. Pass `nothing` for an unweighted basis. |
-| `build_central_slice_basis(x, k, l, rBF, params; geometry)` | Evaluate the central-slice basis for either geometry. Multiply the matrix by the fitted coefficient vector. |
+| `build_forward_basis(x, k, l, rBF, zIP, params, nothing; geometry)` | Build the forward operator for either geometry and return `U, S, V`. |
+| `build_central_slice_basis(x, k, l, rBF, params; geometry)` | Evaluate the stored slice basis. To recover the physical density from `Ginv * vec(result.coefficients)`, divide by `4π` for a quadrant basis. The half-plane matrix includes this factor. `pbasex` handles both conventions. |
 | `fold_quadrants(image, column, row; quadrant_filter)` | Sum the selected quadrants for an image or stack. |
 | `resize_folded_quadrant(quadrant, nx)` | Crop or zero-pad the folded quadrant to the basis dimensions. |
 | `unfold_quadrant(quadrant; center_offset=true, quadrant_count=4)` | Mirror a folded image and divide by the number of quadrants summed. |

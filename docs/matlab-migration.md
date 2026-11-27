@@ -35,15 +35,16 @@ explicitly to preserve its energy scale.
 | `resizeFolded(foldQuadrant(image,x0,y0,filter),nx)` | Pass the original image with `center=(x0,y0)`, `quadrant_filter=filter`, and the basis file. The same one-based column and row coordinates apply. |
 | `loadG(filename, makeImages)` | Pass `basis=filename` and `make_images=makeImages` with a Julia Boolean. |
 | `regularization` | `reg` |
-| `out.E`, `out.IE`, `out.betas` | `result.E`, `result.IE`, `result.betas` |
-| `out.c` | `vec(result.coefficients)` for one image. Julia also exposes the radial-by-angular coefficient matrix. |
-| `out.recon`, `out.inv` | `result.reconstructed_image`, `result.inverted_image` |
+| `out.E`, `out.betas` | Same scale as `result.E`, `result.betas`. |
+| `out.IE / 4`, `out.c / 4` | Same scale as `result.IE`, `vec(result.coefficients)`. |
+| `out.recon`, `out.inv / (4*pi)` | Same scale as `result.reconstructed_image`, `result.inverted_image`. |
 
-For an image stack, loop over its slices in Julia. The Julia fit rescales a
-subset of quadrants to the four-quadrant intensity scale. Use all four
-quadrants when reproducing the validated MATLAB workflow. See the
-[usage guide](usage.md#set-the-image-center-and-quadrants) for geometry and
-[weighted fits](usage.md#weighted-fits) for how Julia handles weights.
+These conversions assume the standard MATLAB four-quadrant sum and apply
+also to saved outputs from the earlier Julia quadrant convention. The current
+Julia fit averages the selected quadrants and returns the same physical units
+in both geometries. Existing basis files can be reused directly. For an image
+stack, loop over its slices in Julia. See the
+[usage guide](usage.md#set-the-image-center-and-quadrants) for geometry.
 
 ## Export a Julia basis for MATLAB
 
@@ -75,15 +76,16 @@ end
 ```
 
 With CPBASEX on the MATLAB path, load the file with
-`loadG('data/julia-basis/G_r512_k128_l10.h5', 1)`. This export uses an
-unweighted quadrant basis and includes the central-slice matrix. Half-plane
+`loadG('data/julia-basis/G_r512_k128_l10.h5', 1)`. This export uses a
+quadrant basis and includes the central-slice matrix. Half-plane
 files use a different row layout and slice normalization, so use them
 with the Julia half-plane workflow.
 
 ## Validation results
 
-These quadrant-mode comparisons used Julia 1.11.3 and MATLAB R2024b with
-all four quadrants selected and unweighted fits. Relative L2 difference is the norm of the
+These historical quadrant-mode comparisons used the earlier Julia intensity
+convention, Julia 1.11.3 and MATLAB R2024b with all four quadrants selected.
+The peak heights below are on that earlier scale. Relative L2 difference is the norm of the
 elementwise difference divided by the norm of the reference output.
 
 ### Bundled example image
@@ -96,7 +98,6 @@ elementwise difference divided by the norm of the reference output.
 MATLAB CPBASEX uses trapezoidal integration for the forward basis, while
 Julia uses adaptive Gauss–Kronrod integration. Independently generated
 Gaussian bases can therefore differ even when the input parameters agree.
-Julia's weighted basis file behavior is covered by package tests.
 [Bundled-image validation in PR #2](https://github.com/jakiesumrain/PBASEX-Julia/pull/2)
 
 ### Circularized image with aligned polarization
