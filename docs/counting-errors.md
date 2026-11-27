@@ -6,6 +6,41 @@ This derivation uses the notation of the
 counting uncertainty of yields and anisotropies for fixed analysis
 settings. It applies to both detector geometries.
 
+## Calculate counting errors in Julia
+
+Pass the original count histogram to `pbasex_counts`. Give the peak limits in
+the units of the fitted energy axis. This example uses pixel².
+
+```julia
+analysis = pbasex_counts(counts; basis=basis_path, geometry=:quadrant,
+                         center=(column, row), alpha=1.0,
+                         peak_windows=[(32000, 34000), (34500, 36500)],
+                         make_images=false)
+energy, spectrum, spectrum_se = analysis.result.E, analysis.result.IE, analysis.spectrum_se
+orders = analysis.result.legendre_orders[2:end]
+peak = analysis.peaks[1]
+peak.window, peak.yield, peak.yield_se, peak.betas, peak.beta_se
+```
+
+Use `geometry=:half_plane` and its corresponding basis to retain odd orders.
+Omit `peak_windows` for spectrum errors alone. Each `spectrum_se` is a
+pointwise standard error in the units of `IE`. Adjacent spectrum samples can
+be correlated. Use `peak.yield_se` for the uncertainty of the integrated
+yield. The code integrates the piecewise-linear energy components over each
+window, including partial segments at both ends, before taking their ratios.
+Both beta vectors follow `orders`. A zero fitted yield gives undefined betas.
+For a fitted yield at or below one estimated standard error, the routine
+returns `NaN` for the symmetric beta errors. Above that threshold the
+first-order approximation still requires a well-resolved denominator.
+
+This entry point assumes independent Poisson counts in the supplied pixels,
+a fixed center, and fixed analysis settings. An integer histogram or its
+integer-valued floating-point representation is suitable. Pixel permutations
+such as a 90° rotation preserve the model. Interpolated or tapered images,
+background-subtracted data, and fixed-total acquisition require the
+corresponding propagation described below. The returned uncertainties
+cover counting statistics only.
+
 ## 1. From detector counts to basis coefficients
 
 Let $n_i$ be the number of centroided electron events in original
@@ -178,6 +213,15 @@ image, it cancels in (7) because $m_\ell-\beta_\ell^\star m_0=0$.
 This cancellation holds to first order for the fixed linear analysis above.
 
 ### Experimental checks
+
+The package tests draw 1,000 independent Poisson histograms per geometry
+from a known forward projection and refit each histogram. The quadrant
+case tests an even anisotropy. The half-plane case includes both odd and
+even anisotropies and a cropped detector edge. For the spectrum samples,
+integrated yield, and integrated betas, the tests compare the root mean
+square reported error with the observed standard deviation. They also
+measure how often the estimate plus or minus one standard error contains
+the result from fitting the noiseless mean image.
 
 - For independent Poisson signal and background exposures with subtraction
   $\mathbf n_{\rm sig}-a\mathbf n_{\rm bg}$ and fixed exposure scale

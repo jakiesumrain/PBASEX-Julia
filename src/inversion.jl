@@ -4,10 +4,11 @@ using LinearAlgebra
 
 using ..PBASEXTypes: BASISData, PBASEXResult, basis_grid
 using ..ImageProcessing: fold_quadrants, resize_folded_quadrant, unfold_quadrant,
-                         fold_half_plane, unfold_half_plane
+                         fold_half_plane, unfold_half_plane, quadrant_sum
+using ..CountingErrors: summarize_counting_errors
 using ..MathUtils: detector_dimensions, axial_coordinates
 
-export pbasex
+export pbasex, pbasex_counts
 
 """
     pbasex(image; basis, geometry=:quadrant, options...) -> PBASEXResult
@@ -38,7 +39,39 @@ function pbasex(image::AbstractMatrix{T};
                 basis::AbstractString,
                 geometry=:quadrant,
                 options...) where {T<:AbstractFloat}
-    fit_input = pre_process_image(image, basis, options, geometry)
+    return fit_projection(image, basis, geometry, options, nothing)
+end
+
+"""
+    pbasex_counts(image; basis, geometry=:quadrant, peak_windows=(), options...)
+
+Fit raw detector counts and propagate independent Poisson counting noise.
+
+# Arguments
+- `image` is a nonnegative, integer-valued detector histogram.
+- `peak_windows` contains pairs of energy limits in the units of `result.E`.
+- `basis`, `geometry` and fit options follow `pbasex`. Use a fixed center and
+  the original counts before interpolation, subtraction or intensity scaling.
+
+# Returns
+A named tuple with the ordinary fit (`result`), pointwise one-standard-error
+bars (`spectrum_se`), and one summary per window (`peaks`). Each summary
+contains `window`, `yield`, `yield_se`, `betas`, and `beta_se`. Beta columns
+follow `result.legendre_orders[2:end]`. A yield within one standard error
+of zero or below gives undefined symmetric beta error bars (`NaN`).
+"""
+function pbasex_counts(image::AbstractMatrix{<:Real}; basis::AbstractString,
+                       geometry=:quadrant, peak_windows=(), options...)
+    all(n -> isfinite(n) && n >= 0 && isinteger(n), image) ||
+        throw(ArgumentError("Counting errors require finite nonnegative raw integer counts"))
+    isnothing(get(options, :weights, nothing)) ||
+        throw(ArgumentError("Counting errors require the raw unweighted detector histogram"))
+    counts = eltype(image) <: AbstractFloat ? image : Float64.(image)
+    return fit_projection(counts, basis, geometry, options, collect(peak_windows))
+end
+
+function fit_projection(image::AbstractMatrix{T}, basis, geometry, options, windows) where T
+    fit_input = pre_process_image(image, basis, options, geometry; counting=!isnothing(windows))
     basis_data = BASISData{T}(basis; fit_input.basis_options..., fit_input.make_images)
     detector_coordinates, radial_centers, legendre_orders = basis_data.x, basis_data.k, basis_data.l
     validate_angular_orders(legendre_orders, geometry)
@@ -88,9 +121,12 @@ function pbasex(image::AbstractMatrix{T};
             @warn "Residuals require the input and reconstructed detector grids to have the same size and center."
         end
     end
-    return PBASEXResult{T}(energy, energy_spectrum, anisotropy_parameters,
+    result = PBASEXResult{T}(energy, energy_spectrum, anisotropy_parameters,
                            reconstructed_image, inverted_image, residuals, polar_coefficients,
                            legendre_orders)
+    isnothing(windows) && return result
+    return summarize_counting_errors(result, basis_data, singular_value_filter,
+                                     fit_input.count_variance, fit_input.energy_scale, windows)
 end
 
 mirror_quadrant(pixels) = unfold_quadrant(pixels; quadrant_count=1)
@@ -103,7 +139,8 @@ function validate_angular_orders(legendre_orders, geometry)
         throw(ArgumentError("Odd Legendre orders require geometry=:half_plane"))
 end
 
-function pre_process_image(image::AbstractMatrix{T}, basis_file, options, geometry=:quadrant) where T
+function pre_process_image(image::AbstractMatrix{T}, basis_file, options, geometry=:quadrant;
+                           counting=false) where T
     image_rows, image_columns = size(image)
     detector_dimensions(1, geometry)
     @assert geometry === :half_plane || image_rows == image_columns "Input image must be square, got dimensions ($image_rows, $image_columns)"
@@ -134,14 +171,21 @@ function pre_process_image(image::AbstractMatrix{T}, basis_file, options, geomet
         collect(0:511)
     end
     detector_side = length(detector_coordinates)
+    count_variance = nothing
     if geometry === :half_plane
         detector_side > 0 || throw(ArgumentError("x must contain at least one grid point"))
         axial_coordinates(detector_coordinates, geometry)
-        fit_pixels, fit_weights = fold_half_plane(image, center, detector_side, quadrant_filter, weights)
+        counting && (count_variance = zeros(T, 2 * detector_side - 1, detector_side))
+        fit_pixels, fit_weights = fold_half_plane(image, center, detector_side, quadrant_filter, weights;
+                                                count_variance)
     else
         folded_projection = fold_quadrants(image, center...; quadrant_filter=quadrant_filter)
         selected_count = sum(quadrant_filter)
         fit_pixels = resize_folded_quadrant(folded_projection, detector_side) ./ T(selected_count)
+        if counting
+            variance_sum = quadrant_sum(image, center..., quadrant_filter, true)
+            count_variance = resize_folded_quadrant(variance_sum, detector_side) ./ T(selected_count^2)
+        end
         fit_weights = if isnothing(weights)
             nothing
         else
@@ -159,7 +203,7 @@ function pre_process_image(image::AbstractMatrix{T}, basis_file, options, geomet
     basis_options[:x] = detector_coordinates
     basis_options[:weights] = fit_weights
     basis_options[:geometry] = geometry
-    return (; fit_pixels, basis_options, make_images, regularization, energy_scale, center)
+    return (; fit_pixels, basis_options, make_images, regularization, energy_scale, center, count_variance)
 end
 
 end # module Inversion

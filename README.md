@@ -86,7 +86,7 @@ julia --project=. --threads=auto examples/invert_detector_image.jl
   and even-order polar basis expansion.
 - [Forward–backward asymmetry](docs/forward-backward-asymmetry.md) derives
   the implemented half-plane geometry and its odd Legendre terms.
-- [Counting-error derivation](docs/counting-errors.md) derives uncertainties
+- [Counting-error estimation](docs/counting-errors.md) uses `pbasex_counts` to estimate uncertainties
   for peak yields and anisotropies from detector counts.
 
 ## Tests

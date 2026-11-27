@@ -137,8 +137,9 @@ carries through to the spectrum and both images.
   A count in a finite slab requires integrating the density over the slab
   volume. Summing the 2D slice alone omits its depth.
 
-For a derivation of the statistical uncertainties from raw detector counts,
-see [Counting errors](counting-errors.md).
+For raw detector counts, `pbasex_counts` returns the fit, pointwise spectrum
+standard errors and peak-integrated beta values with standard errors.
+[Calculate counting errors in Julia](counting-errors.md#calculate-counting-errors-in-julia)
 
 ## Read and save the results
 
