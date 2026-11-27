@@ -2,6 +2,26 @@ module ImageProcessing
 
 export fold_quadrants, unfold_quadrant, resize_folded_quadrant
 
+function rotation_turns(degrees)
+    degrees isa Real && isfinite(degrees) && iszero(rem(degrees,90)) ||
+        throw(ArgumentError("rotation must be a finite multiple of 90 degrees"))
+    return Int(mod(degrees,360) ÷ 90)
+end
+
+function rotated_grid(shape, center, turns)
+    rows, cols = shape
+    center isa Tuple{Integer,Integer} ||
+        throw(ArgumentError("center must be a one-based (column, row) tuple"))
+    col, row = center
+    1 <= col <= cols && 1 <= row <= rows ||
+        throw(ArgumentError("center is outside the original histogram"))
+    for _ in 1:turns
+        col, row = row, cols + 1 - col
+        rows, cols = cols, rows
+    end
+    return (; shape=(rows,cols), center=(Int(col),Int(row)))
+end
+
 """
     fold_quadrants(detector_image, center_column, center_row; quadrant_filter=[1, 1, 1, 1])
 
@@ -13,6 +33,11 @@ center and extends as far as the smallest selected quadrant in each direction.
 """
 function fold_quadrants(detector_image::AbstractArray{T,N}, center_column::Int, center_row::Int;
                         quadrant_filter::Vector{Int}=[1, 1, 1, 1]) where {T,N}
+    return quadrant_sum(detector_image, center_column, center_row, quadrant_filter, false)
+end
+
+function quadrant_sum(detector_image::AbstractArray{T,N}, center_column, center_row,
+                      quadrant_filter, poisson_variance) where {T,N}
     @assert N in (2, 3) "Input must be a 2D or 3D array"
     @assert length(quadrant_filter) == 4 "quadrant_filter must have exactly 4 elements"
     @assert all(in((0, 1)), quadrant_filter) "quadrant_filter must contain only 0s or 1s"
@@ -33,7 +58,21 @@ function fold_quadrants(detector_image::AbstractArray{T,N}, center_column::Int, 
         row_step, column_step = quadrant_directions[quadrant]
         row_indices = range(center_row; step=row_step, length=row_extent + 1)
         column_indices = range(center_column; step=column_step, length=column_extent + 1)
-        folded_projection .+= view(detector_image, row_indices, column_indices, frame_indices...)
+        pixels = view(detector_image, row_indices, column_indices, frame_indices...)
+        folded_projection .+= pixels
+        if poisson_variance
+            # Each occurrence of the same count contributes its multiplicity
+            # times that count to Var(sum), giving multiplicity² in total.
+            axial_partner = (2, 1, 4, 3)[quadrant]
+            equatorial_partner = (4, 3, 2, 1)[quadrant]
+            if quadrant_filter[axial_partner] == 1
+                @views folded_projection[2:end, 1] .+= pixels[2:end, 1]
+            end
+            if quadrant_filter[equatorial_partner] == 1
+                @views folded_projection[1, 2:end] .+= pixels[1, 2:end]
+            end
+            folded_projection[1, 1] += (length(selected_quadrants) - 1) * pixels[1, 1]
+        end
     end
     return folded_projection
 end
@@ -76,7 +115,8 @@ function resize_folded_quadrant(folded_projection::AbstractArray{T,N}, detector_
 end
 
 # Keep both axial hemispheres in detector row order. Mirror only the columns.
-function fold_half_plane(image::AbstractMatrix{T}, center, detector_side, quadrant_filter, weights) where T
+function fold_half_plane(image::AbstractMatrix{T}, center, detector_side, quadrant_filter, weights;
+                         count_variance=nothing) where T
     rows, columns = size(image)
     center_column, center_row = center
     1 <= center_column <= columns && 1 <= center_row <= rows ||
@@ -110,6 +150,10 @@ function fold_half_plane(image::AbstractMatrix{T}, center, detector_side, quadra
             end
             if !iszero(precision_sum)
                 folded[row, column] = weighted_signal / precision_sum
+                if !isnothing(count_variance)
+                    # Raw counts, with each distinct selected pixel used once.
+                    count_variance[row, column] = folded[row, column] / precision_sum
+                end
                 # The unweighted mode gives every observed folded pixel equal weight.
                 multipliers[row, column] = isnothing(weights) ? one(T) : sqrt(precision_sum)
             end

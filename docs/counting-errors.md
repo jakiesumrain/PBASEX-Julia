@@ -6,6 +6,195 @@ This derivation uses the notation of the
 counting uncertainty of yields and anisotropies for fixed analysis
 settings. It applies to both detector geometries.
 
+For a first reading, [From detected electrons to pBASEX error bars](uncertainty-derivation.md)
+starts with a projected electron distribution and follows one measured pixel
+through the fit, energy integration and error calculation.
+
+## Calculate counting errors in Julia
+
+Each call to `pbasex_counts` performs **one Abel inversion**. It returns the
+native-grid spectrum and betas with their counting errors. In the same call,
+you can request integrated results for any number of energy intervals. All
+intervals use the same fitted coefficients.
+
+The examples below use an original count histogram, its measured one-based
+center, and a basis file for the chosen geometry. Define the shared settings
+once, then choose a call below. With `alpha=1.0`, all energies are in px².
+For a calibration in eV, supply that calibration and specify all limits in eV.
+
+```julia
+using PBASEX
+
+settings = (; basis=basis_path, geometry=:half_plane, center=(column, row),
+              alpha=1.0, make_images=false)
+```
+
+Use `:half_plane` for a cylindrically symmetric image with distinct forward
+and backward hemispheres. Use `:quadrant` with a quadrant basis when both
+reflection symmetries hold. `make_images=false` skips constructing the images.
+
+Supply `rotation=90` in `settings` if the original right-hand side of the
+detector should point up along the positive fit axis. Both functions use
+one-based `(column, row)` bins before rotation. With no center override,
+`pbasex_counts` uses the histogram midpoint (the higher index at an even
+dimension). `pbasex_shots` uses the center stored in the checkpoint.
+`pbasex_counts` can build a basis at a new path using ordinary `pbasex`
+basis options. `pbasex_shots` reads an existing basis. For a comparison,
+use the same file, detector coverage, quadrant selection and `reg`.
+
+### Spectrum and betas on the native grid
+
+```julia
+analysis = pbasex_counts(counts; settings...)
+energy, spectrum, spectrum_se = analysis.result.E, analysis.result.IE, analysis.spectrum_se
+orders = analysis.legendre_orders[2:end]
+betas, beta_se = analysis.result.betas, analysis.beta_se
+```
+
+Here `energy[i]` is a sample on the native grid $E_i=\alpha r_i^2$.
+Each `spectrum_se[i]` is a pointwise standard error in the units of `IE`.
+The dimensionless `beta_se[i,j]` is the standard error of `betas[i,j]` at
+`energy[i]` for Legendre order `orders[j]`. It includes the covariance
+between the angular component and the isotropic spectrum at that energy.
+It is `NaN` where `IE[i] <= spectrum_se[i]`, including the origin.
+
+### Integrated yield and betas for selected peaks
+
+Pass one pair of limits per interval. Any interval within the sampled energy
+range is valid if its lower limit is smaller than its upper limit. The limits
+can fall between samples. Choose limits appropriate to your data.
+
+```julia
+windows = [(32_000, 34_000), (34_500, 36_500)]
+analysis = pbasex_counts(counts; settings..., windows)
+orders = analysis.legendre_orders[2:end]
+peak = analysis.windows[1]       # First interval, in the order supplied
+peak.window, peak.yield, peak.yield_se
+peak.betas, peak.beta_se       # One value and standard error per order
+```
+
+Both `pbasex_counts` and `pbasex_shots` accept `windows` and return these fields in input order. Existing counts analyses can still use `peak_windows` and `analysis.peaks`.
+
+For raw electron counts, `peak.yield` is the fitted number of detected
+electrons in the interval. A beta describes their combined anisotropy.
+A zero yield gives undefined betas. For a negative fitted yield the
+counts fit returns the algebraic ratio, whose denominator has no physical
+interpretation as an electron yield. The shot fit returns `NaN` for that
+beta. When the fitted yield in the counts fit is at or below
+one estimated standard error, `peak.beta_se` is `NaN`. Even above that
+threshold, symmetric beta errors are approximate for weak signals.
+
+### Yield-preserving spectrum and betas on a uniform energy grid
+
+Give each bin its own window in one call. The example extracts the binned
+spectrum and $\beta_2$ for a basis that includes order 2.
+
+```julia
+edges = collect(30_000:500:40_000)
+windows = collect(zip(edges[1:end-1], edges[2:end]))
+analysis = pbasex_counts(counts; settings..., windows)
+
+energy_mid = (edges[1:end-1] .+ edges[2:end]) ./ 2
+spectrum = [bin.spectrum for bin in analysis.windows]
+spectrum_se = [bin.spectrum_se for bin in analysis.windows]
+
+orders = analysis.legendre_orders[2:end]
+j = only(findall(==(2), orders))
+beta2 = [bin.betas[j] for bin in analysis.windows]
+beta2_se = [bin.beta_se[j] for bin in analysis.windows]
+```
+
+For a bin $[a,b]$, the code integrates each piecewise-linear angular
+component $I_\ell(E)$ on the native grid, including the partial segments
+at the bin edges. Writing $B_\ell=\int_a^b I_\ell(E)\,dE$, the fitted count
+is $B_0$, the bin-averaged spectrum is $B_0/(b-a)$, and the bin anisotropy
+is $B_\ell/B_0$. Only the spectrum and its error are divided by bin width.
+Use `energy_mid` as the plotting coordinate for these bin averages.
+
+Adjacent bin yields sum to the integral of the fitted spectrum over the
+combined interval. Their errors can be correlated, especially for bins
+finer than the native spacing. To obtain the counting error for a combined
+interval, include that interval as another window in the same call. The
+binned outputs live in `analysis.windows`; `analysis.result.E`,
+`analysis.result.IE`, `analysis.spectrum_se`, and `analysis.beta_se` always
+refer to the native samples.
+
+### Count statistics
+
+This entry point assumes independent Poisson counts in the supplied pixels,
+a fixed center, and fixed analysis settings. An integer histogram or its
+integer-valued floating-point representation is suitable. Pixel permutations
+such as a 90° rotation preserve the model. Interpolated or tapered images,
+background-subtracted data, and fixed-total acquisition require the
+corresponding propagation described below. The returned uncertainties
+cover counting statistics only.
+
+## Shot-resolved uncertainties from a corrected checkpoint
+
+For a worked three-shot example and a derivation of the bootstrap estimator,
+see [How shot-resolved pBASEX works](shot-uncertainties.md).
+
+Use `pbasex_shots` when each corrected electron retains its shot ID. The
+estimate pools the angular contributions from all shots. The bootstrap
+resamples whole shots and takes each beta ratio after summation. Its spread
+includes counting fluctuations and the variation between observed shots.
+
+```julia
+using PBASEX, Random
+analysis = pbasex_shots(checkpoint_path; basis=basis_path,
+    windows=[(Ea, Eb), (Ec, Ed)], alpha=1.0, rotation=90,
+    replicates=2000, confidence=0.95, rng=Xoshiro(42))
+w = analysis.windows[1]
+w.yield, w.yield_se, w.yield_ci
+w.spectrum, w.spectrum_se           # yield and standard error per unit energy
+analysis.legendre_orders[2:end], w.betas, w.beta_se, w.beta_ci
+```
+
+Supply any intervals inside the basis energy range. Adjacent equal-width
+intervals give a uniform spectrum. The basis file sets the geometry and
+Legendre orders. Energy calibration is per squared detector pixel. The
+reader accounts for the histogram resolution and uses the stored center
+unless `center=(column,row)` overrides it in one-based **unrotated** bins.
+Both estimators accept signed rotations in multiples of 90 degrees (default
+zero). Use `rotation=90` for a counterclockwise 90° rotation. A half-plane
+basis must match the detector coverage after centering and rotation.
+
+The reader accepts GUI schema 1 checkpoints with these HDF5 entries.
+
+| Location | Contents |
+| --- | --- |
+| Root attribute `schema_version` | Integer 1 |
+| `shots/id` | One-dimensional integer roster in acquisition order, including zero-hit shots. At least two IDs, each unique. |
+| `events/shot_id`, `events/x_corrected`, `events/y_corrected` | Three one-dimensional columns of the same length. Each row describes one event and its integer shot ID from the roster. Events may be interleaved. |
+| `geometry/x_edges`, `geometry/y_edges` | Increasing bin edges in detector pixels with spacing `1/resolution_factor`. |
+| Attributes on `geometry` | `center_xy` in detector coordinates for the default center, positive `resolution_factor`, `x_direction="right"`, `y_direction="down"`, `coordinate_units="detector_pixel"`. |
+
+Bins include their lower edge and the final upper edge. The recorded event
+coordinates already include the distortion correction. Fixed `shot_weights`
+can be supplied in roster order. Geometry, calibration and any supplied
+normalization factors are held fixed through all replicates.
+
+The default bootstrap samples individual exchangeable shots. For serial
+dependence within stationary runs, pass `block_length` and optionally
+`run_ids` in roster order. Consecutive equal IDs define a run. Each run
+retains its shot count. Choose a block length shorter than the run and
+long enough to capture the measured correlation. The intervals are
+pointwise percentile intervals. A nonpositive pooled yield or a lower
+yield confidence limit at or below zero gives undefined beta error bars.
+`valid_replicates` counts draws with positive yield.
+
+All windows share draws. With `keep_replicates=true`, each window provides
+`replicates.yield[draw]` and `replicates.betas[order_index,draw]`. These
+support arbitrary paired contrasts. To stream draws to a file instead,
+pass a callback `replicate_sink=(window_index, draws) -> ...`.
+
+The defaults process one window at a time, up to 65,536 events per read,
+and approximately 64 MiB of singular-vector columns per read (at least
+one column). For a batch of $m$ window/order combinations, the response
+and shot tables together use about $8m(P+S)$ bytes for $P$ folded pixels
+and $S$ shots, in addition to read buffers, bootstrap samples and runtime
+overhead. Increase `window_batch` to trade memory for fewer file passes.
+
 ## 1. From detector counts to basis coefficients
 
 Let $n_i$ be the number of centroided electron events in original
@@ -139,7 +328,9 @@ $$
 For one image, substitute $B_0$, $\widehat\beta_\ell$, $\widehat\beta_m$
 and the estimated yield covariance into the right-hand side of (7).
 Set $m=\ell$ and take the square root for the estimated standard error.
-For several windows, apply the Jacobian from (6) to their joint covariance.
+For a pointwise beta, use the same formula with $B_\ell=I_\ell(E_i)$ and
+$B_0=I_0(E_i)$ at the same sampled energy. For several windows, apply the
+Jacobian from (6) to their joint covariance.
 
 The expansion requires denominator fluctuations to be small relative to
 $m_0$. Compare the measured $B_0$ with its standard error
@@ -178,6 +369,15 @@ image, it cancels in (7) because $m_\ell-\beta_\ell^\star m_0=0$.
 This cancellation holds to first order for the fixed linear analysis above.
 
 ### Experimental checks
+
+The package tests draw 1,000 independent Poisson histograms per geometry
+from a known forward projection and refit each histogram. The quadrant
+case tests an even anisotropy. The half-plane case includes both odd and
+even anisotropies and a cropped detector edge. For the spectrum samples,
+pointwise betas, integrated yield, and integrated betas, the tests compare the root mean
+square reported error with the observed standard deviation. They also
+measure how often the estimate plus or minus one standard error contains
+the result from fitting the noiseless mean image.
 
 - For independent Poisson signal and background exposures with subtraction
   $\mathbf n_{\rm sig}-a\mathbf n_{\rm bg}$ and fixed exposure scale
