@@ -4,7 +4,7 @@ using LinearAlgebra
 
 using ..PBASEXTypes: BASISData, PBASEXResult, basis_grid
 using ..ImageProcessing: fold_quadrants, resize_folded_quadrant, unfold_quadrant,
-                         fold_half_plane, unfold_half_plane, quadrant_sum
+                         fold_half_plane, unfold_half_plane, quadrant_sum, rotation_turns, rotated_grid
 using ..CountingErrors: summarize_counting_errors
 using ..MathUtils: detector_dimensions, axial_coordinates
 
@@ -43,31 +43,49 @@ function pbasex(image::AbstractMatrix{T};
 end
 
 """
-    pbasex_counts(image; basis, geometry=:quadrant, peak_windows=(), options...)
+    pbasex_counts(image; basis, geometry=:quadrant, windows=(), center=nothing, rotation=0, options...)
 
 Fit raw detector counts and propagate independent Poisson counting noise.
 
 # Arguments
 - `image` is a nonnegative, integer-valued detector histogram.
-- `peak_windows` contains pairs of energy limits in the units of `result.E`.
+- `center=(column, row)` uses one-based bins on the original histogram.
+  The default uses its midpoint (the higher index at an even dimension).
+- `rotation` is in degrees counterclockwise, in multiples of 90. The image
+  and its center rotate together before quadrant selection.
+- Omit `windows` for native-grid values and errors. Supply `(low, high)`
+  pairs in the units of `result.E` for integrated results. Adjacent equal-width
+  pairs give uniform bins. One inversion serves all requested windows.
 - `basis`, `geometry` and fit options follow `pbasex`. Use a fixed center and
   the original counts before interpolation, subtraction or intensity scaling.
 
 # Returns
 A named tuple with the ordinary fit (`result`), pointwise one-standard-error
-bars (`spectrum_se`), and one summary per window (`peaks`). Each summary
-contains `window`, `yield`, `yield_se`, `betas`, and `beta_se`. Beta columns
-follow `result.legendre_orders[2:end]`. A yield within one standard error
+bars for the spectrum (`spectrum_se`) and anisotropies (`beta_se`), and
+one summary per window (`windows`). The matrix `beta_se` has the same shape
+and order as `result.betas` and is available without peak windows. Each summary
+contains `window`, `yield`, `yield_se`, `spectrum`, `spectrum_se`, `betas`, and
+`beta_se`. Spectrum and its error are per unit energy. Beta columns follow
+`legendre_orders[2:end]`. The older `peak_windows` keyword and `peaks` field
+remain available. A yield within one standard error
 of zero or below gives undefined symmetric beta error bars (`NaN`).
 """
 function pbasex_counts(image::AbstractMatrix{<:Real}; basis::AbstractString,
-                       geometry=:quadrant, peak_windows=(), options...)
+                       geometry=:quadrant, windows=nothing, peak_windows=nothing,
+                       center=nothing, rotation=0, options...)
     all(n -> isfinite(n) && n >= 0 && isinteger(n), image) ||
         throw(ArgumentError("Counting errors require finite nonnegative raw integer counts"))
     isnothing(get(options, :weights, nothing)) ||
         throw(ArgumentError("Counting errors require the raw unweighted detector histogram"))
     counts = eltype(image) <: AbstractFloat ? image : Float64.(image)
-    return fit_projection(counts, basis, geometry, options, collect(peak_windows))
+    !isnothing(windows) && !isnothing(peak_windows) &&
+        throw(ArgumentError("Specify only one of windows and peak_windows"))
+    rows, cols = size(counts)
+    original_center = something(center, (cols ÷ 2 + 1, rows ÷ 2 + 1))
+    turns = rotation_turns(rotation)
+    grid = rotated_grid(size(counts), original_center, turns)
+    oriented_counts = iszero(turns) ? counts : rotl90(counts, turns)
+    return fit_projection(oriented_counts, basis, geometry, (; options..., grid.center), collect(something(windows, peak_windows, ())))
 end
 
 function fit_projection(image::AbstractMatrix{T}, basis, geometry, options, windows) where T
@@ -80,12 +98,7 @@ function fit_projection(image::AbstractMatrix{T}, basis, geometry, options, wind
     angular_count = length(legendre_orders)
 
     U, S, V = basis_data.U, basis_data.S, basis_data.V
-    singular_value_filter = if iszero(fit_input.regularization)
-        singular_value_cutoff = min(size(U, 1), size(V, 1)) * eps(T) * maximum(S)
-        map(singular_value -> singular_value > singular_value_cutoff ? inv(singular_value) : zero(T), S)
-    else
-        S ./ (S.^2 .+ fit_input.regularization)
-    end
+    singular_value_filter = inverse_filter(S, fit_input.regularization, size(U, 1), size(V, 1))
     coefficient_vector = V * (singular_value_filter .* (U' * vec(fit_input.fit_pixels)))
     polar_coefficients = reshape(coefficient_vector, radial_count, angular_count)
 
@@ -130,6 +143,12 @@ function fit_projection(image::AbstractMatrix{T}, basis, geometry, options, wind
 end
 
 mirror_quadrant(pixels) = unfold_quadrant(pixels; quadrant_count=1)
+
+function inverse_filter(S::Vector{T}, reg, pixels, coefficients) where T
+    iszero(reg) || return S ./ (S.^2 .+ reg)
+    cutoff = min(pixels, coefficients) * eps(T) * maximum(S)
+    return map(s -> s > cutoff ? inv(s) : zero(T), S)
+end
 
 function validate_angular_orders(legendre_orders, geometry)
     !isempty(legendre_orders) && first(legendre_orders) == 0 &&

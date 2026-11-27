@@ -35,11 +35,23 @@ function summarize_counting_errors(result, basis, singular_filter, count_varianc
     radial_count, energy_count = size(energy_basis)
     isotropic_vectors = @view basis.V[1:radial_count, :]
     spectrum_se = similar(result.IE)
+    beta_se = fill(T(NaN), size(result.betas))
     # Bound scratch space on a full detector; never form its covariance.
     for first_index in 1:16:energy_count
         indices = first_index:min(first_index + 15, energy_count)
-        response = detector_response(isotropic_vectors' * view(energy_basis, :, indices))
+        radial_samples = view(energy_basis, :, indices)
+        response = detector_response(isotropic_vectors' * radial_samples)
         spectrum_se[indices] .= norm.(eachcol(response))
+        for order in axes(beta_se, 2)
+            rows = order*radial_count+1:(order+1)*radial_count
+            angular_response = detector_response(view(basis.V, rows, :)' * radial_samples)
+            for (column, i) in enumerate(indices)
+                if result.IE[i] > spectrum_se[i]
+                    beta_se[i, order] = ratio_se(view(angular_response, :, column),
+                        view(response, :, column), result.betas[i, order], result.IE[i])
+                end
+            end
+        end
     end
 
     peaks = map(windows) do limits
@@ -56,16 +68,20 @@ function summarize_counting_errors(result, basis, singular_filter, count_varianc
         isotropic = view(response, :, 1)
         yield_se = norm(isotropic)
         betas = iszero(yields[1]) ? fill(T(NaN), order_count-1) : yields[2:end] ./ yields[1]
-        beta_se = fill(T(NaN), length(betas))
+        peak_beta_se = fill(T(NaN), length(betas))
         if yields[1] > yield_se
             for j in eachindex(betas)
-                # Shared numerator and denominator noise cancels before squaring.
-                beta_se[j] = norm(view(response, :, j+1) .- betas[j] .* isotropic) / yields[1]
+                peak_beta_se[j] = ratio_se(view(response, :, j+1), isotropic, betas[j], yields[1])
             end
         end
-        (; window, yield=yields[1], yield_se, betas, beta_se)
+        width = window[2] - window[1]
+        (; window, yield=yields[1], yield_se, betas, beta_se=peak_beta_se,
+           spectrum=yields[1]/width, spectrum_se=yield_se/width)
     end
-    return (; result, spectrum_se, peaks)
+    return (; result, spectrum_se, peaks, beta_se, windows=peaks, legendre_orders=result.legendre_orders)
 end
+
+# Subtract the shared numerator/denominator noise before taking the norm.
+ratio_se(angular, isotropic, beta, intensity) = norm(angular .- beta .* isotropic) / intensity
 
 end # module CountingErrors

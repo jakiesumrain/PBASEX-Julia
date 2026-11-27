@@ -42,7 +42,8 @@ end
             end
             target_fit = pbasex(mean_image; options...)
             components = peak_components(target_fit)
-            target = [target_fit.IE[2:end]; components[1]; components[2:end] ./ components[1]]
+            target = [target_fit.IE[2:end]; components[1]; components[2:end] ./ components[1];
+                      vec(target_fit.betas[2:end, :])]
             replicates = 1000
             estimates = zeros(length(target), replicates)
             errors = similar(estimates)
@@ -50,8 +51,10 @@ end
                 counts = poisson_draw.(Ref(rng), mean_image)
                 analysis = pbasex_counts(counts; options..., peak_windows=[window])
                 peak = only(analysis.peaks)
-                estimates[:, trial] = [analysis.result.IE[2:end]; peak.yield; peak.betas]
-                errors[:, trial] = [analysis.spectrum_se[2:end]; peak.yield_se; peak.beta_se]
+                estimates[:, trial] = [analysis.result.IE[2:end]; peak.yield; peak.betas;
+                                       vec(analysis.result.betas[2:end, :])]
+                errors[:, trial] = [analysis.spectrum_se[2:end]; peak.yield_se; peak.beta_se;
+                                    vec(analysis.beta_se[2:end, :])]
                 if trial == 1
                     ordinary = pbasex(Float64.(counts); options...)
                     @test ordinary.IE ≈ analysis.result.IE
@@ -59,6 +62,10 @@ end
                     @test peak.yield ≈ expected[1]
                     @test peak.betas ≈ expected[2:end] ./ expected[1]
                     @test iszero(analysis.spectrum_se[1])
+                    without_windows = pbasex_counts(counts; options...)
+                    @test isequal(without_windows.beta_se, analysis.beta_se)
+                    @test size(analysis.beta_se) == size(ordinary.betas)
+                    @test all(isnan, analysis.beta_se[1, :])
                 end
             end
             average = sum(estimates; dims=2) ./ replicates
@@ -73,6 +80,7 @@ end
             empty_image = zeros(Int, size(mean_image))
             zero_fit = pbasex_counts(empty_image; options..., peak_windows=[window, (0, 2)])
             @test all(iszero, zero_fit.spectrum_se)
+            @test all(isnan, zero_fit.beta_se)
             @test length(zero_fit.peaks) == 2
             @test all(isnan, zero_fit.peaks[1].beta_se)
             @test isempty(pbasex_counts(empty_image; options...).peaks)
@@ -86,6 +94,10 @@ end
                 isolated[location...] = 25
                 single = pbasex_counts(isolated; options...)
                 @test single.spectrum_se ≈ abs.(single.result.IE) ./ 5
+                # With one source of noise its scale cancels from every ratio.
+                reliable = single.result.IE .> single.spectrum_se
+                @test all(abs.(single.beta_se[reliable, :]) .< 1e-10)
+                @test all(isnan, single.beta_se[.!reliable, :])
             end
         end
     end

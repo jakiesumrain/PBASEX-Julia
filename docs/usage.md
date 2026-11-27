@@ -137,11 +137,39 @@ carries through to the spectrum and both images.
   A count in a finite slab requires integrating the density over the slab
   volume. Summing the 2D slice alone omits its depth.
 
-For raw detector counts, `pbasex_counts` returns the fit, pointwise spectrum
-standard errors and peak-integrated beta values with standard errors.
-[Calculate counting errors in Julia](counting-errors.md#calculate-counting-errors-in-julia)
+For raw detector counts, `pbasex_counts` performs one inversion and propagates
+counting errors through the fit. Choose the energy intervals for the observable
+you want to report.
+
+| Observable | What to pass | Where to read the values and errors |
+| --- | --- | --- |
+| [Spectrum and betas at each native energy](counting-errors.md#spectrum-and-betas-on-the-native-grid) | Omit `windows` | `analysis.result.IE` and `analysis.spectrum_se`, or `analysis.result.betas` and `analysis.beta_se` |
+| [Integrated yield and betas for selected peaks](counting-errors.md#integrated-yield-and-betas-for-selected-peaks) | One `(low, high)` pair per interval in `windows` | `analysis.windows[i]` contains `yield`, `yield_se`, `betas`, and `beta_se` |
+| [Bin-averaged spectrum and betas on a uniform grid](counting-errors.md#yield-preserving-spectrum-and-betas-on-a-uniform-energy-grid) | Adjacent, equal-width intervals in `windows` | Read each bin's `spectrum` and `spectrum_se`. Use its betas and beta errors directly. |
 
 ## Read and save the results
+
+For a corrected event checkpoint with shot IDs, use `pbasex_shots` to
+estimate uncertainty from the spread across whole shots. It accepts an
+existing basis and any collection of energy windows.
+
+Both `pbasex_counts` and `pbasex_shots` take `center=(column, row)` in
+one-based bins of the original histogram. For horizontal polarization,
+`rotation=90` turns the detector's right edge toward the top of the fit
+image. Use `rotation=-90` to turn its left edge toward the top instead.
+This choice sets the positive axial direction for odd Legendre orders.
+The default is zero degrees. Multiples of 90° preserve the pixel counts
+exactly. Both functions transform the center along with the data.
+
+[Shot-resolved example and output fields](counting-errors.md#shot-resolved-uncertainties-from-a-corrected-checkpoint)
+
+For a uniform spectrum, the [side-by-side Julia example](shot-uncertainties.md#a-uniform-spectrum-from-either-input)
+uses the same window definitions and plotting fields for both inputs.
+The [step-by-step mathematical derivation](uncertainty-derivation.md) explains
+why the fitted yields agree and how each function calculates an error bar.
+
+The following fields belong to the ordinary inversion result. Access them
+directly after `pbasex`, or through `analysis.result` after `pbasex_counts`.
 
 | Field | Shape and meaning |
 | --- | --- |

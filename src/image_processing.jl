@@ -2,6 +2,26 @@ module ImageProcessing
 
 export fold_quadrants, unfold_quadrant, resize_folded_quadrant
 
+function rotation_turns(degrees)
+    degrees isa Real && isfinite(degrees) && iszero(rem(degrees,90)) ||
+        throw(ArgumentError("rotation must be a finite multiple of 90 degrees"))
+    return Int(mod(degrees,360) ÷ 90)
+end
+
+function rotated_grid(shape, center, turns)
+    rows, cols = shape
+    center isa Tuple{Integer,Integer} ||
+        throw(ArgumentError("center must be a one-based (column, row) tuple"))
+    col, row = center
+    1 <= col <= cols && 1 <= row <= rows ||
+        throw(ArgumentError("center is outside the original histogram"))
+    for _ in 1:turns
+        col, row = row, cols + 1 - col
+        rows, cols = cols, rows
+    end
+    return (; shape=(rows,cols), center=(Int(col),Int(row)))
+end
+
 """
     fold_quadrants(detector_image, center_column, center_row; quadrant_filter=[1, 1, 1, 1])
 

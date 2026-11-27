@@ -14,6 +14,7 @@ include("central_slice_basis.jl")
 include("pbasex_types.jl")
 include("counting_errors.jl")
 include("inversion.jl")
+include("shot_uncertainties.jl")
 
 using .MathUtils
 using .ImageProcessing: fold_quadrants, unfold_quadrant, resize_folded_quadrant
@@ -23,6 +24,8 @@ using .PBASEXTypes: PBASEXResult, BASISData
 using .Inversion: pbasex, pbasex_counts
 
 export pbasex, pbasex_counts, PBASEXResult, BASISData
+using .ShotUncertainties: pbasex_shots
+export pbasex_shots
 export build_forward_basis, build_central_slice_basis
 export fold_quadrants, unfold_quadrant, resize_folded_quadrant, leg, greet
 

@@ -84,10 +84,17 @@ julia --project=. --threads=auto examples/invert_detector_image.jl
   MATLAB basis, exporting a compatible basis from Julia, and the measured parity.
 - [Original algorithm derivation](docs/pbasex.pdf) describes the Abel transform
   and even-order polar basis expansion.
+- [From detected electrons to pBASEX error bars](docs/uncertainty-derivation.md)
+  derives the spectrum, window yields and beta uncertainties from the original
+  pBASEX equations, with worked examples of pixel counting noise and shot resampling.
 - [Forward–backward asymmetry](docs/forward-backward-asymmetry.md) derives
   the implemented half-plane geometry and its odd Legendre terms.
 - [Counting-error estimation](docs/counting-errors.md) uses `pbasex_counts` to estimate uncertainties
-  for peak yields and anisotropies from detector counts.
+  for the spectrum and anisotropies at each energy, and for yields and
+  anisotropies integrated over a peak. The guide also shows how to report
+  [a spectrum and betas in uniform energy bins](docs/counting-errors.md#yield-preserving-spectrum-and-betas-on-a-uniform-energy-grid).
+- [How shot-resolved pBASEX works](docs/shot-uncertainties.md)
+  uses `pbasex_shots` to bootstrap arbitrary energy intervals from corrected event checkpoints.
 
 ## Tests
 

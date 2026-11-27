@@ -13,6 +13,7 @@ using Test
 
 @testset "PBASEX.jl" begin
     include("counting_errors.jl")
+    include("shot_uncertainties.jl")
 
     @testset "Legendre polynomials" begin
         # Orders 0-4 use closed forms; higher orders use Bonnet's recurrence.
