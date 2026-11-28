@@ -56,6 +56,8 @@ Fit raw detector counts and propagate independent Poisson counting noise.
 - Omit `windows` for native-grid values and errors. Supply `(low, high)`
   pairs in the units of `result.E` for integrated results. Adjacent equal-width
   pairs give uniform bins. One inversion serves all requested windows.
+- Set `native_errors=false` to compute uncertainty only for the requested
+  windows. The returned `spectrum_se` and `beta_se` fields are then `nothing`.
 - `basis`, `geometry` and fit options follow `pbasex`. Use a fixed center and
   the original counts before interpolation, subtraction or intensity scaling.
 
@@ -72,7 +74,7 @@ of zero or below gives undefined symmetric beta error bars (`NaN`).
 """
 function pbasex_counts(image::AbstractMatrix{<:Real}; basis::AbstractString,
                        geometry=:quadrant, windows=nothing, peak_windows=nothing,
-                       center=nothing, rotation=0, options...)
+                       center=nothing, rotation=0, native_errors::Bool=true, options...)
     all(n -> isfinite(n) && n >= 0 && isinteger(n), image) ||
         throw(ArgumentError("Counting errors require finite nonnegative raw integer counts"))
     isnothing(get(options, :weights, nothing)) ||
@@ -85,10 +87,12 @@ function pbasex_counts(image::AbstractMatrix{<:Real}; basis::AbstractString,
     turns = rotation_turns(rotation)
     grid = rotated_grid(size(counts), original_center, turns)
     oriented_counts = iszero(turns) ? counts : rotl90(counts, turns)
-    return fit_projection(oriented_counts, basis, geometry, (; options..., grid.center), collect(something(windows, peak_windows, ())))
+    return fit_projection(oriented_counts, basis, geometry, (; options..., grid.center),
+                          collect(something(windows, peak_windows, ())); native_errors)
 end
 
-function fit_projection(image::AbstractMatrix{T}, basis, geometry, options, windows) where T
+function fit_projection(image::AbstractMatrix{T}, basis, geometry, options, windows;
+                        native_errors=true) where T
     fit_input = pre_process_image(image, basis, options, geometry; counting=!isnothing(windows))
     basis_data = BASISData{T}(basis; fit_input.basis_options..., fit_input.make_images)
     detector_coordinates, radial_centers, legendre_orders = basis_data.x, basis_data.k, basis_data.l
@@ -139,7 +143,8 @@ function fit_projection(image::AbstractMatrix{T}, basis, geometry, options, wind
                            legendre_orders)
     isnothing(windows) && return result
     return summarize_counting_errors(result, basis_data, singular_value_filter,
-                                     fit_input.count_variance, fit_input.energy_scale, windows)
+                                     fit_input.count_variance, fit_input.energy_scale, windows;
+                                     native_errors)
 end
 
 mirror_quadrant(pixels) = unfold_quadrant(pixels; quadrant_count=1)

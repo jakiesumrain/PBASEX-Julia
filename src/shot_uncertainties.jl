@@ -80,12 +80,11 @@ function checkpoint_layout(file, turns, center)
     return (; xe,ye,resolution,grid...)
 end
 
-function shot_totals(file, layout, ids, shot_index, weights, lookup, fraction, responses, chunk)
+function scan_folded_events(consume, file, layout, shot_index, weights, lookup, fraction, chunk)
     events = file["events"]
     shots,x,y = (events[key] for key in ("shot_id","x_corrected","y_corrected"))
     size(shots) == size(x) == size(y) && ndims(x) == 1 && eltype(shots)<:Integer ||
         throw(ArgumentError("Expected aligned event columns and integer shot IDs"))
-    totals = zeros(size(responses,2), length(ids))
     for start in 1:chunk:length(x)
         rows = start:min(length(x),start+chunk-1)
         frames,xs,ys = shots[rows],x[rows],y[rows]
@@ -95,13 +94,54 @@ function shot_totals(file, layout, ids, shot_index, weights, lookup, fraction, r
             p = CartesianIndex(pixel_bin(layout.ye,ys[i]),pixel_bin(layout.xe,xs[i]))
             row = lookup[p]
             row == 0 && continue
-            scale = weights[s]*fraction[p]
-            @inbounds for j in axes(totals,1)
-                totals[j,s] += scale*responses[row,j]
-            end
+            consume(s, row, weights[s]*fraction[p])
+        end
+    end
+    return nothing
+end
+
+function shot_totals(file, layout, ids, shot_index, weights, lookup, fraction, responses, chunk)
+    totals = zeros(size(responses,2), length(ids))
+    scan_folded_events(file, layout, shot_index, weights, lookup, fraction, chunk) do shot, row, scale
+        @inbounds for j in axes(totals,1)
+            totals[j,shot] += scale*responses[row,j]
         end
     end
     return totals
+end
+
+function folded_events(file, layout, ids, shot_index, weights, lookup, fraction, chunk)
+    by_shot = [Tuple{Int,Float64}[] for _ in ids]
+    scan_folded_events(file, layout, shot_index, weights, lookup, fraction, chunk) do shot, row, scale
+        push!(by_shot[shot], (row, scale))
+    end
+    return by_shot
+end
+
+function shot_totals(events, responses)
+    totals = Matrix{Float64}(undef, size(responses,2), length(events))
+    # Read one detector response column at a time. Each shot retains its event order.
+    for j in axes(responses,2), shot in eachindex(events)
+        value = 0.0
+        @inbounds for (row, scale) in events[shot]
+            value += scale*responses[row,j]
+        end
+        totals[j,shot] = value
+    end
+    return totals
+end
+
+function draw_multiplicity!(multiplicity, rng, runs, block)
+    fill!(multiplicity,0)
+    for run in runs
+        remaining = length(run)
+        while remaining > 0
+            start = rand(rng,first(run):last(run)-block+1)
+            take = min(block,remaining)
+            @views multiplicity[start:start+take-1] .+= 1
+            remaining -= take
+        end
+    end
 end
 
 function resample_totals(totals, runs, block, draws, seed)
@@ -109,19 +149,19 @@ function resample_totals(totals, runs, block, draws, seed)
     samples = zeros(size(totals,1),draws)
     multiplicity = zeros(size(totals,2))
     for draw in 1:draws
-        fill!(multiplicity,0)
-        for run in runs
-            remaining = length(run)
-            while remaining > 0
-                start = rand(rng,first(run):last(run)-block+1)
-                take = min(block,remaining)
-                @views multiplicity[start:start+take-1] .+= 1
-                remaining -= take
-            end
-        end
+        draw_multiplicity!(multiplicity, rng, runs, block)
         mul!(view(samples,:,draw),totals,multiplicity)
     end
     return samples
+end
+
+function bootstrap_draws(shots, runs, block, draws, seed)
+    rng = Xoshiro(seed)
+    multiplicities = Matrix{Float64}(undef, shots, draws)
+    for draw in eachcol(multiplicities)
+        draw_multiplicity!(draw, rng, runs, block)
+    end
+    return multiplicities
 end
 
 function window_summary(window, pooled, samples, confidence, keep)
@@ -154,7 +194,7 @@ end
     pbasex_shots(checkpoint; basis, windows, center=nothing, rotation=0, options...)
 
 Estimate integrated electron yields and anisotropies from a schema-1 corrected
-event checkpoint with a whole-shot bootstrap. Reads events and SVD blocks from disk.
+event checkpoint with a whole-shot bootstrap. Streams events from disk.
 
 # Arguments
 - `basis` is an existing HDF5 basis. Its geometry selects the folding convention.
@@ -167,6 +207,11 @@ event checkpoint with a whole-shot bootstrap. Reads events and SVD blocks from d
   consecutive runs. Set `block_length` for within-run moving-block resampling.
 - `replicates`, `confidence`, and `rng` control bootstrap inference.
 - `window_batch`, `basis_chunk_bytes`, and `event_chunk` bound read/work batches.
+- Set `resident_u=true` to read the complete left singular-vector matrix once
+  and reuse it across window batches. The default streams blocks of this matrix.
+- Set `reuse_shot_work=true` to scan and fold the checkpoint once and cache
+  bootstrap draws across batches. This keeps folded events and a Float64
+  matrix with one entry per shot per replicate in RAM.
 - Optional `replicate_sink(index, draws)` consumes one window's aligned draws
   at a time, for example to write them to disk.
 
@@ -178,7 +223,8 @@ function pbasex_shots(checkpoint; basis, windows, geometry=nothing, center=nothi
         alpha=1.0, reg=0.0, quadrant_filter=[1,1,1,1], shot_weights=nothing,
         run_ids=nothing, block_length::Int=1, replicates::Int=1000, confidence=0.95,
         rng::AbstractRNG=default_rng(), keep_replicates=false, replicate_sink=nothing, window_batch::Int=1,
-        basis_chunk_bytes::Int=64*1024^2, event_chunk::Int=65536)
+        basis_chunk_bytes::Int=64*1024^2, event_chunk::Int=65536, resident_u::Bool=false,
+        reuse_shot_work::Bool=false)
     isfinite(alpha) && alpha > 0 && isfinite(reg) && reg >= 0 || throw(ArgumentError("Invalid alpha or reg"))
     replicates >= 2 && 0 < confidence < 1 && min(block_length,window_batch,basis_chunk_bytes,event_chunk)>0 ||
         throw(ArgumentError("Invalid bootstrap or chunk settings"))
@@ -242,6 +288,9 @@ function pbasex_shots(checkpoint; basis, windows, geometry=nothing, center=nothi
             h = inverse_filter(S,reg,pixels,nk*nl)
             # Julia pixel rows are contiguous in native and CPBASEX files.
             columns = max(1,basis_chunk_bytes ÷ (8*pixels))
+            resident = resident_u ? read(U) : nothing
+            events = reuse_shot_work ? folded_events(file,layout,ids,index,weights,lookup,fraction,event_chunk) : nothing
+            draws = reuse_shot_work ? bootstrap_draws(length(ids),runs,block_length,replicates,seed) : nothing
             summaries = NamedTuple[]
             for first_window in 1:window_batch:length(limits)
                 batch = limits[first_window:min(end,first_window+window_batch-1)]
@@ -255,12 +304,19 @@ function pbasex_shots(checkpoint; basis, windows, geometry=nothing, center=nothi
                     end
                 end
                 responses = zeros(pixels,size(coordinates,2))
-                for start in 1:columns:length(S)
-                    cols = start:min(length(S),start+columns-1)
-                    mul!(responses,U[:,cols],view(coordinates,cols,:),1.0,1.0)
+                if isnothing(resident)
+                    for start in 1:columns:length(S)
+                        cols = start:min(length(S),start+columns-1)
+                        mul!(responses,U[:,cols],view(coordinates,cols,:),1.0,1.0)
+                    end
+                else
+                    mul!(responses,resident,coordinates)
                 end
-                totals = shot_totals(file,layout,ids,index,weights,lookup,fraction,responses,event_chunk)
-                samples = resample_totals(totals,runs,block_length,replicates,seed)
+                totals = isnothing(events) ?
+                    shot_totals(file,layout,ids,index,weights,lookup,fraction,responses,event_chunk) :
+                    shot_totals(events,responses)
+                samples = isnothing(draws) ?
+                    resample_totals(totals,runs,block_length,replicates,seed) : totals * draws
                 pooled = vec(sum(totals;dims=2))
                 for (i,w) in enumerate(batch)
                     rows = (i-1)*nl+1:i*nl

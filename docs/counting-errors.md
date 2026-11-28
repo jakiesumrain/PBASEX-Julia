@@ -74,6 +74,9 @@ peak.betas, peak.beta_se       # One value and standard error per order
 ```
 
 Both `pbasex_counts` and `pbasex_shots` accept `windows` and return these fields in input order. Existing counts analyses can still use `peak_windows` and `analysis.peaks`.
+Pass `native_errors=false` to `pbasex_counts` when only the window uncertainties
+are needed. The native fit remains available in `analysis.result`, and
+`analysis.spectrum_se` and `analysis.beta_se` are `nothing`.
 
 For raw electron counts, `peak.yield` is the fitted number of detected
 electrons in the interval. A beta describes their combined anisotropy.

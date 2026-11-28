@@ -78,6 +78,19 @@ end
             @test all(p -> 0.62 < p < 0.74, coverage)
 
             empty_image = zeros(Int, size(mean_image))
+            dense_windows = [(i/2, (i+1)/2) for i in 0:10]
+            hist = round.(Int, mean_image)
+            dense = pbasex_counts(hist; options..., windows=dense_windows, native_errors=false)
+            @test isnothing(dense.spectrum_se)
+            @test isnothing(dense.beta_se)
+            for (limits, batched) in zip(dense_windows, dense.windows)
+                single = only(pbasex_counts(hist; options..., windows=[limits]).windows)
+                @test batched.window == limits
+                @test batched.yield ≈ single.yield
+                @test batched.yield_se ≈ single.yield_se
+                @test all(isapprox.(batched.betas, single.betas; nans=true))
+                @test all(isapprox.(batched.beta_se, single.beta_se; nans=true))
+            end
             zero_fit = pbasex_counts(empty_image; options..., peak_windows=[window, (0, 2)])
             @test all(iszero, zero_fit.spectrum_se)
             @test all(isnan, zero_fit.beta_se)
@@ -92,12 +105,18 @@ end
             for location in ((6, 6), (4, 6), (6, 4), (4, 5), (4, 1))
                 isolated = copy(empty_image)
                 isolated[location...] = 25
-                single = pbasex_counts(isolated; options...)
+                single = pbasex_counts(isolated; options..., windows=dense_windows)
                 @test single.spectrum_se ≈ abs.(single.result.IE) ./ 5
                 # With one source of noise its scale cancels from every ratio.
                 reliable = single.result.IE .> single.spectrum_se
                 @test all(abs.(single.beta_se[reliable, :]) .< 1e-10)
                 @test all(isnan, single.beta_se[.!reliable, :])
+                for peak in single.windows
+                    @test peak.yield_se ≈ abs(peak.yield) / 5 atol=1e-12
+                    if peak.yield > peak.yield_se
+                        @test all(abs.(peak.beta_se) .< 1e-10)
+                    end
+                end
             end
         end
     end

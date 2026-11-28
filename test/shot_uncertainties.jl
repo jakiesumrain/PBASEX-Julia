@@ -109,6 +109,15 @@ end
                         block_length=2,run_ids=repeat([1,2];inner=8))
             result = pbasex_shots(path;settings...,rng=Xoshiro(99),event_chunk=57,
                                   window_batch=2,basis_chunk_bytes=512)
+            for reuse_shot_work in (false, true)
+                resident = pbasex_shots(path;settings...,rng=Xoshiro(99),event_chunk=57,
+                                        window_batch=2,resident_u=true,reuse_shot_work)
+                for (streamed, loaded) in zip(result.windows, resident.windows)
+                    @test loaded.replicates.yield ≈ streamed.replicates.yield
+                    @test all(isapprox.(loaded.replicates.betas, streamed.replicates.betas; nans=true))
+                    @test loaded.valid_replicates == streamed.valid_replicates
+                end
+            end
             @test result.shots == 16
             legacy = pbasex_shots(path; settings..., rotation=nothing, quarter_turns=1,
                                   rng=Xoshiro(99), event_chunk=57, window_batch=2, basis_chunk_bytes=512)
@@ -158,8 +167,13 @@ end
                 end
             end
             @test result.windows[1].replicates.betas ≈ result.windows[3].replicates.betas
-            zero_result = pbasex_shots(path;settings...,shot_weights=zeros(16))
-            @test all(w -> w.valid_replicates==0 && all(isnan,w.beta_se),zero_result.windows)
+            for reuse_shot_work in (false, true)
+                zero_result = pbasex_shots(path;settings...,shot_weights=zeros(16),
+                                           resident_u=reuse_shot_work,reuse_shot_work)
+                @test all(w -> w.valid_replicates == 0 && all(isnan, w.betas) &&
+                               all(isnan, w.beta_se) && all(isnan, w.replicates.betas),
+                          zero_result.windows)
+            end
             streamed = []
             second = pbasex_shots(path;settings...,rng=Xoshiro(99),keep_replicates=false,
                                   replicate_sink=(i,draws)->push!(streamed,draws))
