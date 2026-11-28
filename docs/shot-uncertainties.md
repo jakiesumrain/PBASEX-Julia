@@ -222,6 +222,8 @@ the [checkpoint schema and memory controls](counting-errors.md#shot-resolved-unc
 | `run_ids`, `block_length` | With no run IDs the roster is one run. A change of ID starts a new run. The default block length of 1 draws individual shots. Use a longer block for serial correlation and retain the acquisition order. |
 | `shot_weights` | Optional fixed nonnegative multipliers, one per roster entry; default 1 each. With nonunit multipliers the yield and spectrum are on the chosen normalization scale. |
 | `window_batch`, `event_chunk`, `basis_chunk_bytes` | Defaults are 1 window per batch, 65,536 events per read and 64 MiB targeted per read of singular-vector columns. Increase the first setting to reduce repeated reads if memory permits. |
+| `resident_u` | Set to `true` to keep the left singular vectors in RAM across batches. Allow memory for the complete matrix plus the batch work buffers. Events still stream from the checkpoint. The default reads blocks of the matrix. |
+| `reuse_shot_work` | Set to `true` to bin and fold the checkpoint events once and reuse the same bootstrap multiplicities in every batch. This stores the folded events and a Float64 shot-by-replicate matrix. The default streams events and regenerates the same draws in each batch. |
 | `keep_replicates`, `replicate_sink` | By default the return value holds summaries. Set `keep_replicates=true` to retain draws, or pass a function `(window_index, draws) -> ...` to consume them window by window. |
 
 The return value records `shots` (number of acquired shots), `geometry`,
